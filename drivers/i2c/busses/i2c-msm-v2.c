@@ -51,10 +51,6 @@ static int i2c_msm_xfer_wait_for_completion(struct i2c_msm_ctrl *ctrl,
 static int  i2c_msm_pm_resume(struct device *dev);
 static void i2c_msm_pm_suspend(struct device *dev);
 static void i2c_msm_clk_path_init(struct i2c_msm_ctrl *ctrl);
-static void i2c_msm_pinctrl_recovery(struct i2c_msm_ctrl *ctrl,
-				bool state);
-static void i2c_msm_pm_pinctrl_state(struct i2c_msm_ctrl *ctrl,
-				bool runtime_active);
 
 /* string table for enum i2c_msm_xfer_mode_id */
 const char * const i2c_msm_mode_str_tbl[] = {
@@ -411,7 +407,13 @@ struct i2c_msm_clk_div_fld {
  * divider values as per HW Designers
  */
 static struct i2c_msm_clk_div_fld i2c_msm_clk_div_map[] = {
+#ifndef VENDOR_EDIT //add by jiachenghui for DCDC I2C SCL duty cycle 2015-06-26
 	{KHz(100), 124, 62},
+//add by jiachenghui for DCDC I2C SCL duty cycle 2015-06-26
+#else
+       {KHz(100), 93, 0},//19200/(100*2)-3
+#endif //VENDOR_EDIT
+//end add by jiachenghui for DCDC I2C SCL duty cycle 2015-06-26
 	{KHz(400),  28, 14},
 	{KHz(1000),  8,  5},
 };
@@ -1913,23 +1915,6 @@ static void i2c_msm_qup_init(struct i2c_msm_ctrl *ctrl)
 }
 
 /*
- * qup_i2c_try_recover_gpio: reconfigure to GPIO and issue 1-clk pulse
- */
-static void qup_i2c_try_recover_gpio(struct i2c_msm_ctrl *ctrl)
-{
-
-	/* call i2c_msm_qup_init() to set core in idle state */
-	i2c_msm_qup_init(ctrl);
-	udelay(5);
-	i2c_msm_pinctrl_recovery(ctrl, true);
-	udelay(20);
-	i2c_msm_pinctrl_recovery(ctrl, false);
-	udelay(20);
-	i2c_msm_pm_pinctrl_state(ctrl, true);
-	udelay(20);
-}
-
-/*
  * qup_i2c_try_recover_bus_busy: issue QUP bus clear command
  */
 static int qup_i2c_try_recover_bus_busy(struct i2c_msm_ctrl *ctrl)
@@ -1970,7 +1955,7 @@ static int qup_i2c_try_recover_bus_busy(struct i2c_msm_ctrl *ctrl)
 static int qup_i2c_recover_bus_busy(struct i2c_msm_ctrl *ctrl)
 {
 	u32 bus_clr, bus_active, status;
-	int retry = 0, count;
+	int retry = 0;
 	dev_info(ctrl->dev, "Executing bus recovery procedure (9 clk pulse)\n");
 
 	do {
@@ -1982,29 +1967,6 @@ static int qup_i2c_recover_bus_busy(struct i2c_msm_ctrl *ctrl)
 		if (++retry >= I2C_QUP_MAX_BUS_RECOVERY_RETRY)
 			break;
 	} while (bus_clr || bus_active);
-
-	if (ctrl->rsrcs.extended_recovery) {
-		/* Only panic on extended-recovery enabled bus */
-		if (ctrl->rsrcs.recovery_count >
-			I2C_QUP_RECOVER_FAILED_PANIC) {
-			pr_info("BUG: Bus recovery failed trigger panic\n");
-			BUG();
-		}
-
-		count = ctrl->rsrcs.recovery_count %
-					I2C_QUP_MAX_BUS_RECOVERY_RETRY;
-		if (!count) {
-			qup_i2c_try_recover_gpio(ctrl);
-			status = readl_relaxed(ctrl->rsrcs.base +
-						QUP_I2C_STATUS);
-			bus_active = status & I2C_STATUS_BUS_ACTIVE;
-			dev_info(ctrl->dev, "Extended Bus recovery #%d %s\n",
-					ctrl->rsrcs.recovery_count,
-					(bus_active) ? "fail" : "success");
-		}
-
-		ctrl->rsrcs.recovery_count++;
-	}
 
 	dev_info(ctrl->dev, "Bus recovery %s after %d retries\n",
 		(bus_clr || bus_active) ? "fail" : "success", retry);
@@ -2490,8 +2452,6 @@ static int i2c_msm_rsrcs_process_dt(struct i2c_msm_ctrl *ctrl,
 							DT_OPT,  DT_U32,  0},
 	{"qcom,fs-clk-div",		&fs_clk_div,
 							DT_OPT,  DT_U32,  0},
-	{"mmi,extended-recovery",	&(ctrl->rsrcs.extended_recovery),
-							DT_OPT,  DT_BOOL, 0},
 	{NULL,  NULL,					0,       0,       0},
 	};
 
@@ -2616,15 +2576,6 @@ static int i2c_msm_rsrcs_gpio_pinctrl_init(struct i2c_msm_ctrl *ctrl)
 	ctrl->rsrcs.gpio_state_suspend =
 		i2c_msm_rsrcs_gpio_get_state(ctrl, I2C_MSM_PINCTRL_SUSPEND);
 
-	if (ctrl->rsrcs.extended_recovery) {
-		ctrl->rsrcs.gpio_state_out =
-			i2c_msm_rsrcs_gpio_get_state(ctrl,
-						I2C_MSM_PINCTRL_OUT);
-
-		ctrl->rsrcs.gpio_state_in =
-			i2c_msm_rsrcs_gpio_get_state(ctrl,
-						I2C_MSM_PINCTRL_IN);
-	}
 	return 0;
 }
 
@@ -2655,32 +2606,6 @@ static void i2c_msm_pm_pinctrl_state(struct i2c_msm_ctrl *ctrl,
 	}
 }
 
-static void i2c_msm_pinctrl_recovery(struct i2c_msm_ctrl *ctrl,
-				bool state)
-{
-	struct pinctrl_state *pins_state;
-	const char           *pins_state_name;
-
-	if (state) {
-		pins_state      = ctrl->rsrcs.gpio_state_out;
-		pins_state_name = I2C_MSM_PINCTRL_OUT;
-	} else {
-		pins_state      = ctrl->rsrcs.gpio_state_in;
-		pins_state_name = I2C_MSM_PINCTRL_IN;
-	}
-
-	if (!IS_ERR_OR_NULL(pins_state)) {
-		int ret = pinctrl_select_state(ctrl->rsrcs.pinctrl, pins_state);
-		if (ret)
-			dev_err(ctrl->dev,
-			"error pinctrl_select_state(%s) err:%d\n",
-			pins_state_name, ret);
-	} else {
-		dev_err(ctrl->dev,
-			"error pinctrl state-name:'%s' is not configured\n",
-			pins_state_name);
-	}
-}
 /*
  * i2c_msm_rsrcs_clk_init: get clocks and set rate
  *
@@ -3048,7 +2973,7 @@ static int i2c_msm_init(void)
 {
 	return platform_driver_register(&i2c_msm_driver);
 }
-arch_initcall(i2c_msm_init);
+subsys_initcall(i2c_msm_init);
 
 static void i2c_msm_exit(void)
 {

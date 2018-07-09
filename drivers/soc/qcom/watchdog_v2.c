@@ -30,7 +30,6 @@
 #include <soc/qcom/scm.h>
 #include <soc/qcom/memory_dump.h>
 #include <soc/qcom/watchdog.h>
-#include "watchdog_cpu_ctx.h"
 #include <linux/kmemleak.h>
 
 #define MODULE_NAME "msm_watchdog"
@@ -50,9 +49,9 @@
 #define MASK_SIZE		32
 #define SCM_SET_REGSAVE_CMD	0x2
 #define SCM_SVC_SEC_WDOG_DIS	0x7
+#define MAX_CPU_CTX_SIZE	2048
 
 static struct msm_watchdog_data *wdog_data;
-static struct msm_watchdog_data *g_wdog_dd;
 
 static int cpu_idle_pc_state[NR_CPUS];
 
@@ -81,8 +80,6 @@ struct msm_watchdog_data {
 	struct task_struct *watchdog_task;
 	struct timer_list pet_timer;
 	struct completion pet_complete;
-       phys_addr_t cpu_ctx_addr;
-       size_t cpu_ctx_size_percpu;
 };
 
 /*
@@ -156,61 +153,6 @@ static int msm_watchdog_resume(struct device *dev)
 	wdog_dd->enabled = true;
 	wdog_dd->last_pet = sched_clock();
 	return 0;
-}
-
-void msm_panic_wdt_set(unsigned int timeout)
-{
-       unsigned long flags;
-       void __iomem *msm_wdt_base;
-
-       local_irq_save(flags);
-
-       if (timeout > 60)
-               timeout = 60;
-
-       msm_wdt_base = g_wdog_dd->base;
-       __raw_writel(WDT_HZ * timeout, msm_wdt_base + WDT0_BARK_TIME);
-       __raw_writel(WDT_HZ * (timeout + 2), msm_wdt_base + WDT0_BITE_TIME);
-       __raw_writel(1, msm_wdt_base + WDT0_EN);
-       __raw_writel(1, msm_wdt_base + WDT0_RST);
-
-       local_irq_restore(flags);
-}
-void msm_watchdog_reset(unsigned int timeout)
-{
-       unsigned long flags;
-       void __iomem *msm_wdt_base;
-
-       local_irq_save(flags);
-
-       if (timeout > 60)
-               timeout = 60;
-
-       msm_wdt_base = g_wdog_dd->base;
-       __raw_writel(WDT_HZ * timeout, msm_wdt_base + WDT0_BARK_TIME);
-       __raw_writel(WDT_HZ * (timeout + 2), msm_wdt_base + WDT0_BITE_TIME);
-       __raw_writel(1, msm_wdt_base + WDT0_EN);
-       __raw_writel(1, msm_wdt_base + WDT0_RST);
-
-       for (timeout += 2; timeout > 0; timeout--)
-               mdelay(1000);
-
-       for (timeout = 2; timeout > 0; timeout--) {
-               __raw_writel(0, msm_wdt_base + WDT0_BARK_TIME);
-               __raw_writel(WDT_HZ, msm_wdt_base + WDT0_BITE_TIME);
-               __raw_writel(1, msm_wdt_base + WDT0_RST);
-               mdelay(1000);
-       }
-
-       for (timeout = 2; timeout > 0; timeout--) {
-               __raw_writel(WDT_HZ, msm_wdt_base + WDT0_BARK_TIME);
-               __raw_writel(0, msm_wdt_base + WDT0_BITE_TIME);
-               __raw_writel(1, msm_wdt_base + WDT0_RST);
-               mdelay(1000);
-       }
-       pr_err("Watchdog reset has failed\n");
-
-       local_irq_restore(flags);
 }
 
 static int panic_wdog_handler(struct notifier_block *this,
@@ -339,11 +281,6 @@ static void pet_watchdog(struct msm_watchdog_data *wdog_dd)
 	wdog_dd->last_pet = time_ns;
 }
 
-void g_pet_watchdog(void)
-{
-       pet_watchdog(g_wdog_dd);
-}
-
 static void keep_alive_response(void *info)
 {
 	int cpu = smp_processor_id();
@@ -388,7 +325,6 @@ static __ref int watchdog_kthread(void *arg)
 			&wdog_dd->pet_complete) != 0)
 			;
 		INIT_COMPLETION(wdog_dd->pet_complete);
-
 		if (enable) {
 			delay_time = msecs_to_jiffies(wdog_dd->pet_time);
 			if (wdog_dd->do_ipi_ping)
@@ -546,10 +482,6 @@ static void configure_bark_dump(struct msm_watchdog_data *wdog_dd)
 			 */
 		}
 	} else {
-               phys_addr_t cpu_buf_phys;
-               size_t buf_size_percpu;
-
-
 		cpu_data = kzalloc(sizeof(struct msm_dump_data) *
 				   num_present_cpus(), GFP_KERNEL);
 		if (!cpu_data) {
@@ -557,24 +489,17 @@ static void configure_bark_dump(struct msm_watchdog_data *wdog_dd)
 			goto out0;
 		}
 		kmemleak_not_leak(cpu_data);
-               if (wdog_dd->cpu_ctx_addr && wdog_dd->cpu_ctx_size_percpu) {
-                       cpu_buf_phys = wdog_dd->cpu_ctx_addr;
-                       buf_size_percpu = wdog_dd->cpu_ctx_size_percpu;
-               } else {
-                       cpu_buf = kzalloc(MAX_CPU_CTX_SIZE * num_present_cpus(),
-                                       GFP_KERNEL);
-                       if (!cpu_buf) {
-                               pr_err("cpu reg context space allocation failed\n");
-                               goto out1;
-                       }
-                       cpu_buf_phys = virt_to_phys(cpu_buf);
-                       buf_size_percpu = MAX_CPU_CTX_SIZE;
-               }
+		cpu_buf = kzalloc(MAX_CPU_CTX_SIZE * num_present_cpus(),
+				  GFP_KERNEL);
+		if (!cpu_buf) {
+			pr_err("cpu reg context space allocation failed\n");
+			goto out1;
+		}
 		kmemleak_not_leak(cpu_buf);
 		for_each_cpu(cpu, cpu_present_mask) {
-                       cpu_data[cpu].addr = cpu_buf_phys +
-                                               cpu * buf_size_percpu;
-                       cpu_data[cpu].len = buf_size_percpu;
+			cpu_data[cpu].addr = virt_to_phys(cpu_buf +
+							cpu * MAX_CPU_CTX_SIZE);
+			cpu_data[cpu].len = MAX_CPU_CTX_SIZE;
 			dump_entry.id = MSM_DUMP_DATA_CPU_CTX + cpu;
 			dump_entry.addr = virt_to_phys(&cpu_data[cpu]);
 			ret = msm_dump_data_register(MSM_DUMP_TABLE_APPS,
@@ -776,10 +701,7 @@ static int msm_watchdog_probe(struct platform_device *pdev)
 	wdog_data = wdog_dd;
 	wdog_dd->dev = &pdev->dev;
 	platform_set_drvdata(pdev, wdog_dd);
-       msm_wdog_get_cpu_ctx(pdev, &wdog_dd->cpu_ctx_addr,
-                               &wdog_dd->cpu_ctx_size_percpu);
 	cpumask_clear(&wdog_dd->alive_mask);
-	g_wdog_dd = wdog_dd;
 	wdog_dd->watchdog_task = kthread_create(watchdog_kthread, wdog_dd,
 			"msm_watchdog");
 	if (IS_ERR(wdog_dd->watchdog_task)) {

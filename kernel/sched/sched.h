@@ -30,13 +30,6 @@ extern __read_mostly int scheduler_running;
 #define TASK_USER_PRIO(p)	USER_PRIO((p)->static_prio)
 #define MAX_USER_PRIO		(USER_PRIO(MAX_PRIO))
 
-struct freq_max_load {
-	struct rcu_head rcu;
-	u32 freqs[0];
-};
-
-extern DEFINE_PER_CPU(struct freq_max_load *, freq_max_load);
-
 /*
  * Helpers for converting nanosecond timing to jiffy resolution
  */
@@ -120,18 +113,28 @@ struct cfs_rq;
 struct rt_rq;
 
 extern struct list_head task_groups;
+#ifdef VENDOR_EDIT
+void skip_cfs_throttle(int skip);
+#endif
 
 struct cfs_bandwidth {
 #ifdef CONFIG_CFS_BANDWIDTH
 	raw_spinlock_t lock;
 	ktime_t period;
 	u64 quota, runtime;
+#ifdef VENDOR_EDIT
+	u64 quota_per_task;
+#endif
 	s64 hierarchal_quota;
 	u64 runtime_expires;
 
 	int idle, timer_active;
 	struct hrtimer period_timer, slack_timer;
+#ifdef VENDOR_EDIT
+	struct list_head throttled_cfs_rq, unthrottled_cfs_rq;
+#else
 	struct list_head throttled_cfs_rq;
+#endif
 
 	/* statistics */
 	int nr_periods, nr_throttled;
@@ -224,7 +227,7 @@ extern void init_cfs_bandwidth(struct cfs_bandwidth *cfs_b);
 extern int sched_group_set_shares(struct task_group *tg, unsigned long shares);
 
 extern void __refill_cfs_bandwidth_runtime(struct cfs_bandwidth *cfs_b);
-extern void __start_cfs_bandwidth(struct cfs_bandwidth *cfs_b);
+extern void __start_cfs_bandwidth(struct cfs_bandwidth *cfs_b, bool force);
 extern void unthrottle_cfs_rq(struct cfs_rq *cfs_rq);
 
 extern void free_rt_sched_group(struct task_group *tg);
@@ -344,7 +347,12 @@ struct cfs_rq {
 	u64 throttled_clock, throttled_clock_task;
 	u64 throttled_clock_task_time;
 	int throttled, throttle_count;
+#ifdef VENDOR_EDIT
+	struct list_head throttled_list, unthrottled_list;
+	atomic_t throttling_in_progress;
+#else
 	struct list_head throttled_list;
+#endif
 #endif /* CONFIG_CFS_BANDWIDTH */
 #endif /* CONFIG_FAIR_GROUP_SCHED */
 };
@@ -541,8 +549,6 @@ struct rq {
 #ifdef CONFIG_SCHED_FREQ_INPUT
 	u64 curr_runnable_sum;
 	u64 prev_runnable_sum;
-	u64 nt_curr_runnable_sum;
-	u64 nt_prev_runnable_sum;
 #endif
 
 #ifdef CONFIG_IRQ_TIME_ACCOUNTING
@@ -756,7 +762,7 @@ extern unsigned int sched_downmigrate;
 extern unsigned int sched_init_task_load_pelt;
 extern unsigned int sched_init_task_load_windows;
 extern unsigned int sched_heavy_task;
-extern unsigned int up_down_migrate_scale_factor;
+
 extern void reset_cpu_hmp_stats(int cpu, int reset_cra);
 extern void fixup_nr_big_small_task(int cpu, int reset_stats);
 unsigned int max_task_load(void);
@@ -764,7 +770,6 @@ extern void sched_account_irqtime(int cpu, struct task_struct *curr,
 				 u64 delta, u64 wallclock);
 unsigned int cpu_temp(int cpu);
 extern unsigned int nr_eligible_big_tasks(int cpu);
-extern void update_up_down_migrate(void);
 
 /*
  * 'load' is in reference to "best cpu" at its best frequency.
@@ -953,7 +958,6 @@ extern void check_for_migration(struct rq *rq, struct task_struct *p);
 extern void pre_big_small_task_count_change(const struct cpumask *cpus);
 extern void post_big_small_task_count_change(const struct cpumask *cpus);
 extern void set_hmp_defaults(void);
-extern int power_delta_exceeded(unsigned int cpu_cost, unsigned int base_cost);
 extern unsigned int power_cost_at_freq(int cpu, unsigned int freq);
 extern void reset_all_window_stats(u64 window_start, unsigned int window_size);
 extern void boost_kick(int cpu);

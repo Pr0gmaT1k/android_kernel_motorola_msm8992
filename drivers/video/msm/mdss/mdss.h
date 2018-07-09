@@ -188,7 +188,6 @@ struct mdss_data_type {
 	u32 mdp_irq_mask;
 	u32 mdp_hist_irq_mask;
 
-	struct mutex fs_ena_lock;
 	int suspend_fs_ena;
 	u8 clk_ena;
 	u8 fs_ena;
@@ -270,6 +269,8 @@ struct mdss_data_type {
 	u32 ndp;
 	void *video_intf;
 	u32 nintf;
+
+	int pp_enable;
 
 	struct mdss_mdp_ad *ad_off;
 	struct mdss_ad_info *ad_cfgs;

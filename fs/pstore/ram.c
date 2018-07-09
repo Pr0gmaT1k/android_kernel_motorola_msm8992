@@ -34,7 +34,7 @@
 #include <linux/slab.h>
 #include <linux/compiler.h>
 #include <linux/pstore_ram.h>
-#include <linux/of.h>
+#include <linux/of_address.h> 
 
 #define RAMOOPS_KERNMSG_HDR "===="
 #define MIN_MEM_SIZE 4096UL
@@ -44,7 +44,14 @@ module_param(record_size, ulong, 0400);
 MODULE_PARM_DESC(record_size,
 		"size of each dump done on oops/panic");
 
+#ifdef VENDOR_EDIT
+static ulong ramoops_console_size = 256*1024UL;
+phys_addr_t ram_console_address_start;
+ssize_t ram_console_address_size;
+#else
 static ulong ramoops_console_size = MIN_MEM_SIZE;
+#endif /* VENDOR_EDIT */
+
 module_param_named(console_size, ramoops_console_size, ulong, 0400);
 MODULE_PARM_DESC(console_size, "size of kernel console log");
 
@@ -55,10 +62,6 @@ MODULE_PARM_DESC(ftrace_size, "size of ftrace log");
 static ulong ramoops_pmsg_size = MIN_MEM_SIZE;
 module_param_named(pmsg_size, ramoops_pmsg_size, ulong, 0400);
 MODULE_PARM_DESC(pmsg_size, "size of user space message log");
-
-static ulong ramoops_annotate_size = MIN_MEM_SIZE;
-module_param_named(annotate_size, ramoops_annotate_size, ulong, 0400);
-MODULE_PARM_DESC(annotate_size, "size of annotation");
 
 static ulong mem_address;
 module_param(mem_address, ulong, 0400);
@@ -92,7 +95,6 @@ struct ramoops_context {
 	struct persistent_ram_zone *cprz;
 	struct persistent_ram_zone *fprz;
 	struct persistent_ram_zone *mprz;
-	struct persistent_ram_zone *aprz;
 	phys_addr_t phys_addr;
 	unsigned long size;
 	unsigned int memtype;
@@ -100,7 +102,6 @@ struct ramoops_context {
 	size_t console_size;
 	size_t ftrace_size;
 	size_t pmsg_size;
-	size_t annotate_size;
 	int dump_oops;
 	struct persistent_ram_ecc_info ecc_info;
 	unsigned int max_dump_cnt;
@@ -110,7 +111,6 @@ struct ramoops_context {
 	unsigned int console_read_cnt;
 	unsigned int ftrace_read_cnt;
 	unsigned int pmsg_read_cnt;
-	unsigned int annotate_read_cnt;
 	struct pstore_info pstore;
 };
 
@@ -125,7 +125,6 @@ static int ramoops_pstore_open(struct pstore_info *psi)
 	cxt->console_read_cnt = 0;
 	cxt->pmsg_read_cnt = 0;
 	cxt->ftrace_read_cnt = 0;
-	cxt->annotate_read_cnt = 0;
 	return 0;
 }
 
@@ -176,23 +175,15 @@ static ssize_t ramoops_pstore_read(u64 *id, enum pstore_type_id *type,
 	prz = ramoops_get_next_prz(cxt->przs, &cxt->dump_read_cnt,
 				   cxt->max_dump_cnt, id, type,
 				   PSTORE_TYPE_DMESG, 1);
-	if (!prz_ok(prz)) {
+	if (!prz_ok(prz))
 		prz = ramoops_get_next_prz(&cxt->cprz, &cxt->console_read_cnt,
 					   1, id, type, PSTORE_TYPE_CONSOLE, 0);
-		if (prz && !persistent_ram_old_size(prz))
-			persistent_ram_annotation_merge(NULL);
-	}
 	if (!prz_ok(prz))
 		prz = ramoops_get_next_prz(&cxt->fprz, &cxt->ftrace_read_cnt,
 					   1, id, type, PSTORE_TYPE_FTRACE, 0);
 	if (!prz_ok(prz))
 		prz = ramoops_get_next_prz(&cxt->mprz, &cxt->pmsg_read_cnt,
 					   1, id, type, PSTORE_TYPE_PMSG, 0);
-	if (!prz_ok(prz)) {
-		prz = ramoops_get_next_prz(&cxt->aprz, &cxt->annotate_read_cnt,
-					1, id, type, PSTORE_TYPE_ANNOTATE, 0);
-		persistent_ram_annotation_merge(prz);
-	}
 	if (!prz_ok(prz))
 		return 0;
 
@@ -261,11 +252,6 @@ static int notrace ramoops_pstore_write_buf(enum pstore_type_id type,
 			return -ENOMEM;
 		persistent_ram_write(cxt->mprz, buf, size);
 		return 0;
-	} else if (type == PSTORE_TYPE_ANNOTATE) {
-		if (!cxt->aprz)
-			return -ENOMEM;
-		persistent_ram_write(cxt->aprz, buf, size);
-		return 0;
 	}
 
 	if (type != PSTORE_TYPE_DMESG)
@@ -274,7 +260,8 @@ static int notrace ramoops_pstore_write_buf(enum pstore_type_id type,
 	/* Out of the various dmesg dump types, ramoops is currently designed
 	 * to only store crash logs, rather than storing general kernel logs.
 	 */
-	if (reason != KMSG_DUMP_PANIC)
+	if (reason != KMSG_DUMP_OOPS &&
+	    reason != KMSG_DUMP_PANIC)
 		return -EINVAL;
 
 	/* Skip Oopes when configured to do so. */
@@ -325,9 +312,6 @@ static int ramoops_pstore_erase(enum pstore_type_id type, u64 id, int count,
 	case PSTORE_TYPE_PMSG:
 		prz = cxt->mprz;
 		break;
-	case PSTORE_TYPE_ANNOTATE:
-		prz = cxt->aprz;
-		break;
 	default:
 		return -EINVAL;
 	}
@@ -348,6 +332,40 @@ static struct ramoops_context oops_cxt = {
 		.erase	= ramoops_pstore_erase,
 	},
 };
+
+static int __init of_ramoops_platform_data(struct device_node *node,
+					struct ramoops_platform_data *pdata)
+{
+	const u32 *addr;
+	u64 size;
+	struct device_node *pnode;
+
+	memset(pdata, 0, sizeof(*pdata));
+
+	pnode = of_parse_phandle(node, "linux,contiguous-region", 0);
+	if (pnode) {
+		addr = of_get_address(pnode, 0, &size, NULL);
+		if (!addr) {
+			pr_err("failed to parse the ramoops memory address\n");
+			of_node_put(pnode);
+			return -EINVAL;
+		}
+		pdata->mem_address = of_read_ulong(addr, 2);
+		pdata->mem_size = (unsigned long) size;
+		of_node_put(pnode);
+	} else {
+		pr_err("mem reservation for ramoops not present\n");
+		return -EINVAL;
+	}
+
+	pdata->record_size = record_size;
+	pdata->console_size = ramoops_console_size;
+	pdata->ftrace_size = ramoops_ftrace_size;
+	pdata->pmsg_size = ramoops_pmsg_size;
+	pdata->dump_oops = dump_oops;
+
+	return 0;
+}
 
 static void ramoops_free_przs(struct ramoops_context *cxt)
 {
@@ -443,91 +461,15 @@ void notrace ramoops_console_write_buf(const char *buf, size_t size)
 	persistent_ram_write(cxt->cprz, buf, size);
 }
 
-#ifdef CONFIG_OF
-static struct of_device_id ramoops_of_match[] = {
-	{ .compatible = "ramoops", },
-	{ },
-};
-
-MODULE_DEVICE_TABLE(of, ramoops_of_match);
-static void  ramoops_of_init(struct platform_device *pdev)
-{
-	const struct device *dev = &pdev->dev;
-	struct ramoops_platform_data *pdata;
-	struct device_node *np = pdev->dev.of_node;
-	u32 start, size, console, annotate = 0;
-	u32 record, oops;
-	int ret;
-
-	pdata = dev_get_drvdata(dev);
-	if (!pdata) {
-		pr_err("private data is empty!\n");
-		return;
-	}
-	ret = of_property_read_u32(np, "android,ramoops-buffer-start",
-				&start);
-	if (ret)
-		return;
-
-	ret = of_property_read_u32(np, "android,ramoops-buffer-size",
-				&size);
-	if (ret)
-		return;
-
-	ret = of_property_read_u32(np, "android,ramoops-console-size",
-				&console);
-	if (ret)
-		return;
-
-	ret = of_property_read_u32(np, "android,ramoops-annotate-size",
-				&annotate);
-	if (ret)
-		pr_info("annotation buffer not configured");
-
-	ret = of_property_read_u32(np, "android,ramoops-record-size",
-				&record);
-	if (ret)
-		pr_info("record buffer not configured");
-
-	ret = of_property_read_u32(np, "android,ramoops-dump-oops",
-				&oops);
-	if (ret)
-		pr_info("oops not configured");
-
-	pdata->mem_address = start;
-	pdata->mem_size = size;
-	pdata->console_size = console;
-	pdata->annotate_size = annotate;
-	pdata->record_size = record;
-	pdata->dump_oops = (int)oops;
-}
-#else
-static inline void ramoops_of_init(struct platform_device *pdev)
-{
-	return;
-}
-#endif
 static int ramoops_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct ramoops_platform_data *pdata;
+	struct ramoops_platform_data *pdata = pdev->dev.platform_data;
+	struct ramoops_platform_data of_pdata; 
 	struct ramoops_context *cxt = &oops_cxt;
 	size_t dump_mem_sz;
 	phys_addr_t paddr;
 	int err = -EINVAL;
-
-	pdata = devm_kzalloc(dev, sizeof(*pdata), GFP_KERNEL);
-	if (!pdata) {
-		pr_err("could not allocate ramoops_platform_data\n");
-		return -ENOMEM;
-	}
-
-	err = dev_set_drvdata(dev, pdata);
-	if (err)
-		goto fail_out;
-
-	if (pdev->dev.of_node)
-		ramoops_of_init(pdev);
 
 	/* Only a single ramoops area allowed at a time, so fail extra
 	 * probes.
@@ -535,30 +477,31 @@ static int ramoops_probe(struct platform_device *pdev)
 	if (cxt->max_dump_cnt)
 		goto fail_out;
 
+	if (pdev->dev.of_node) {
+		if (of_ramoops_platform_data(pdev->dev.of_node, &of_pdata)) {
+			pr_err("Invalid ramoops device tree data\n");
+			goto fail_out;
+		}
+		pdata = &of_pdata;
+	}
+
 	if (!pdata->mem_size || (!pdata->record_size && !pdata->console_size &&
-			!pdata->ftrace_size && !pdata->pmsg_size && !pdata->annotate_size)) {
+			!pdata->ftrace_size && !pdata->pmsg_size)) {
 		pr_err("The memory size and the record/console size must be "
 			"non-zero\n");
 		goto fail_out;
 	}
 
-	if (pdata->mem_size && !is_power_of_2(pdata->mem_size))
+	if (!is_power_of_2(pdata->mem_size))
 		pdata->mem_size = rounddown_pow_of_two(pdata->mem_size);
-	if (pdata->record_size && !is_power_of_2(pdata->record_size))
+	if (!is_power_of_2(pdata->record_size))
 		pdata->record_size = rounddown_pow_of_two(pdata->record_size);
-	if (pdata->console_size && !is_power_of_2(pdata->console_size))
+	if (!is_power_of_2(pdata->console_size))
 		pdata->console_size = rounddown_pow_of_two(pdata->console_size);
-	if (pdata->ftrace_size && !is_power_of_2(pdata->ftrace_size))
+	if (!is_power_of_2(pdata->ftrace_size))
 		pdata->ftrace_size = rounddown_pow_of_two(pdata->ftrace_size);
 	if (pdata->pmsg_size && !is_power_of_2(pdata->pmsg_size))
 		pdata->pmsg_size = rounddown_pow_of_two(pdata->pmsg_size);
-	if (pdata->annotate_size && !is_power_of_2(pdata->annotate_size))
-		pdata->annotate_size =
-			rounddown_pow_of_two(pdata->annotate_size);
-
-	pr_debug("All %#lx record %#lx console %#lx ftrace %#lx annotate %#lx\n",
-		pdata->mem_size, pdata->record_size, pdata->console_size,
-		pdata->ftrace_size, pdata->annotate_size);
 
 	cxt->size = pdata->mem_size;
 	cxt->phys_addr = pdata->mem_address;
@@ -567,14 +510,13 @@ static int ramoops_probe(struct platform_device *pdev)
 	cxt->console_size = pdata->console_size;
 	cxt->ftrace_size = pdata->ftrace_size;
 	cxt->pmsg_size = pdata->pmsg_size;
-	cxt->annotate_size = pdata->annotate_size;
 	cxt->dump_oops = pdata->dump_oops;
 	cxt->ecc_info = pdata->ecc_info;
 
 	paddr = cxt->phys_addr;
 
 	dump_mem_sz = cxt->size - cxt->console_size - cxt->ftrace_size
-		- cxt->pmsg_size - cxt->annotate_size;
+			- cxt->pmsg_size;
 	err = ramoops_init_przs(dev, cxt, &paddr, dump_mem_sz);
 	if (err)
 		goto fail_out;
@@ -584,6 +526,11 @@ static int ramoops_probe(struct platform_device *pdev)
 	if (err)
 		goto fail_init_cprz;
 
+#ifdef VENDOR_EDIT
+	ram_console_address_start = cxt->cprz->paddr;
+	ram_console_address_size  = cxt->console_size;
+#endif /*VENDOR_EDIT*/
+
 	err = ramoops_init_prz(dev, cxt, &cxt->fprz, &paddr, cxt->ftrace_size,
 			       LINUX_VERSION_CODE);
 	if (err)
@@ -592,10 +539,6 @@ static int ramoops_probe(struct platform_device *pdev)
 	err = ramoops_init_prz(dev, cxt, &cxt->mprz, &paddr, cxt->pmsg_size, 0);
 	if (err)
 		goto fail_init_mprz;
-	err = ramoops_init_prz(dev, cxt, &cxt->aprz, &paddr,
-			       cxt->annotate_size, 0);
-	if (err)
-		goto fail_init_aprz;
 
 	cxt->pstore.data = cxt;
 	/*
@@ -641,8 +584,6 @@ fail_buf:
 fail_clear:
 	cxt->pstore.bufsize = 0;
 	cxt->max_dump_cnt = 0;
-	kfree(cxt->aprz);
-fail_init_aprz:
 	kfree(cxt->mprz);
 fail_init_mprz:
 	kfree(cxt->fprz);
@@ -675,13 +616,19 @@ static int __exit ramoops_remove(struct platform_device *pdev)
 	return -EBUSY;
 }
 
+static const struct of_device_id ramoops_of_match[] = {
+	{ .compatible = "ramoops", },
+	{ },
+};
+MODULE_DEVICE_TABLE(of, ramoops_of_match);
+
 static struct platform_driver ramoops_driver = {
 	.probe		= ramoops_probe,
 	.remove		= __exit_p(ramoops_remove),
 	.driver		= {
 		.name	= "ramoops",
-		.of_match_table = of_match_ptr(ramoops_of_match),
 		.owner	= THIS_MODULE,
+		.of_match_table = ramoops_of_match,
 	},
 };
 
@@ -705,7 +652,6 @@ static void ramoops_register_dummy(void)
 	dummy_data->console_size = ramoops_console_size;
 	dummy_data->ftrace_size = ramoops_ftrace_size;
 	dummy_data->pmsg_size = ramoops_pmsg_size;
-	dummy_data->annotate_size = ramoops_annotate_size;
 	dummy_data->dump_oops = dump_oops;
 	/*
 	 * For backwards compatibility ramoops.ecc=1 means 16 bytes ECC

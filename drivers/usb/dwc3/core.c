@@ -122,15 +122,8 @@ static int dwc3_init_usb_phys(struct dwc3 *dwc)
 				__func__, ret);
 		return ret;
 	}
-
 	ret = usb_phy_init(dwc->usb3_phy);
-	if (ret == -EBUSY) {
-		/*
-		 * Setting Max speed as high when USB3 PHY initialiation
-		 * is failing and USB superspeed can't be supported.
-		 */
-		dwc->maximum_speed = USB_SPEED_HIGH;
-	} else if (ret) {
+	if (ret) {
 		pr_err("%s: usb_phy_init(dwc->usb3_phy) returned %d\n",
 				__func__, ret);
 		return ret;
@@ -333,7 +326,7 @@ int dwc3_event_buffers_setup(struct dwc3 *dwc)
 
 	for (n = 0; n < dwc->num_event_buffers; n++) {
 		evt = dwc->ev_buffs[n];
-		dev_dbg(dwc->dev, "Event buf %p dma %08llx length %d\n",
+		dev_dbg(dwc->dev, "Event buf %pK dma %08llx length %d\n",
 				evt->buf, (unsigned long long) evt->dma,
 				evt->length);
 
@@ -832,8 +825,6 @@ err0:
 static int dwc3_remove(struct platform_device *pdev)
 {
 	struct dwc3	*dwc = platform_get_drvdata(pdev);
-
-	pm_runtime_disable(&pdev->dev);
 
 	dwc3_debugfs_exit(dwc);
 

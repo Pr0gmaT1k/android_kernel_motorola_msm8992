@@ -172,6 +172,11 @@ enum msm_cpu {
 	MSM_CPU_TELLURIUM,
 	MSM_CPU_TERBIUM,
 	MSM_CPU_8929,
+
+#ifdef VENDOR_EDIT
+	/* ted, compitable with msm8996, keep 10 for buffering */
+	MSM_CPU_8996 = MSM_CPU_8929 + 10
+#endif
 };
 
 struct msm_soc_info {
@@ -200,7 +205,6 @@ enum msm_cpu socinfo_get_msm_cpu(void);
 uint32_t socinfo_get_id(void);
 uint32_t socinfo_get_version(void);
 uint32_t socinfo_get_raw_id(void);
-uint32_t socinfo_get_raw_version(void);
 char *socinfo_get_build_id(void);
 uint32_t socinfo_get_platform_type(void);
 uint32_t socinfo_get_platform_subtype(void);

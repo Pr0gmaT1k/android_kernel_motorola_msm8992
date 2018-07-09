@@ -26,8 +26,6 @@
 #include <linux/err.h>
 #include <linux/interrupt.h>
 
-#include <linux/seq_file.h>
-#include <linux/debugfs.h>
 #include <linux/types.h>
 #include <linux/file.h>
 #include <linux/device.h>
@@ -40,6 +38,35 @@
 
 #define MTP_BULK_BUFFER_SIZE       16384
 #define INTR_BUFFER_SIZE           28
+
+/*
+* Currently tx and rx buffer len is 131072, inter buffer len is 28.
+* Tx buffer counts is 4, Rx is 2 and intr is 5.
+* In order avoid MTP can't work issue, use fixed memory.
+* 0xAC400000 ------
+*           |  TX  | 0x20000 * 4
+* 0xAC480000 ------
+*           |  RX  | 0x20000 * 2
+* 0xAC4C0000 ------
+*           | INTR | 0x40(alignment) * 5
+*            ------
+*/
+/*Anderson-MTP_cant_work+[*/
+#ifdef VENDOR_EDIT
+/*0xAC400000, 0xAC420000, 0xAC440000, 0xAC460000*/
+#define MTP_TX_BUFFER_BASE           0xAC400000
+/*0xAC480000, 0xAC4A0000*/
+#define MTP_RX_BUFFER_BASE           0xAC480000
+/*0xAC4C0000, 0xAC4C0040, 0xAC4C0080, 0xAC4C00C0, 0xAC4C0100*/
+#define MTP_INTR_BUFFER_BASE         0xAC4C0000
+static int mtpBufferOffset =0;
+static bool useFixAddr = false;
+enum buf_type {
+	TX_BUFFER = 0,
+	RX_BUFFER,
+	INTR_BUFFER,
+};
+#endif /* VENDOR_EDIT */
 
 /* String IDs */
 #define INTERFACE_STRING_INDEX	0
@@ -68,9 +95,6 @@
 /* constants for device status */
 #define MTP_RESPONSE_OK             0x2001
 #define MTP_RESPONSE_DEVICE_BUSY    0x2019
-
-#define MAX_CONTAINER_LENGTH        0xFFFFFFFF
-#define MAX_ITERATION		100
 
 unsigned int mtp_rx_req_len = MTP_BULK_BUFFER_SIZE;
 module_param(mtp_rx_req_len, uint, S_IRUGO | S_IWUSR);
@@ -121,14 +145,6 @@ struct mtp_dev {
 	uint16_t xfer_command;
 	uint32_t xfer_transaction_id;
 	int xfer_result;
-	struct {
-		unsigned long vfs_rbytes;
-		unsigned long vfs_wbytes;
-		unsigned vfs_rtime;
-		unsigned vfs_wtime;
-	} perf[MAX_ITERATION];
-	unsigned dbg_read_index;
-	unsigned dbg_write_index;
 };
 
 static struct usb_interface_descriptor mtp_interface_desc = {
@@ -304,22 +320,6 @@ static struct usb_gadget_strings *mtp_strings[] = {
 	NULL,
 };
 
-static struct usb_string ptp_string_defs[] = {
-	/* Naming interface "PTP" so test scripts will recognize us */
-	[INTERFACE_STRING_INDEX].s	= "PTP",
-	{  },	/* end of list */
-};
-
-static struct usb_gadget_strings ptp_string_table = {
-	.language		= 0x0409,	/* en-US */
-	.strings		= ptp_string_defs,
-};
-
-static struct usb_gadget_strings *ptp_strings[] = {
-	&ptp_string_table,
-	NULL,
-};
-
 /* Microsoft MTP OS String */
 static u8 mtp_os_string[] = {
 	18, /* sizeof(mtp_os_string) */
@@ -392,21 +392,56 @@ static inline struct mtp_dev *func_to_mtp(struct usb_function *f)
 	return container_of(f, struct mtp_dev, function);
 }
 
+#ifdef VENDOR_EDIT
+static struct usb_request *mtp_request_new(struct usb_ep *ep, int buffer_size, enum buf_type type)
+#else
 static struct usb_request *mtp_request_new(struct usb_ep *ep, int buffer_size)
+#endif /* VENDOR_EDIT */
 {
 	struct usb_request *req = usb_ep_alloc_request(ep, GFP_KERNEL);
-	gfp_t gfp_flags = GFP_KERNEL;
 	if (!req)
 		return NULL;
 
 	/* now allocate buffers for the requests */
-	if (buffer_size > (PAGE_SIZE << PAGE_ALLOC_COSTLY_ORDER))
-		gfp_flags |= __GFP_NOWARN;
-	req->buf = kmalloc(buffer_size, gfp_flags);
+	/*Anderson-MTP_cant_work*[*/
+	#ifdef VENDOR_EDIT
+	if(useFixAddr == true) {
+		if(type == TX_BUFFER){
+			req->buf = __va(MTP_TX_BUFFER_BASE + mtpBufferOffset);
+			//pr_info("TX_BUFFE:%p\n", req->buf);
+		}
+		else if(type == RX_BUFFER){
+			req->buf = __va(MTP_RX_BUFFER_BASE + mtpBufferOffset);
+			//pr_info("RX_BUFFE:%p\n", req->buf);
+		}
+		else{
+			req->buf = __va(MTP_INTR_BUFFER_BASE + mtpBufferOffset);
+			//pr_info("INTR_BUFFE:%p\n", req->buf);
+		}
+	}
+	else{
+		req->buf = kmalloc(buffer_size, GFP_KERNEL);
+	}
+	memset(req->buf, 0, buffer_size);
+	#else
+	req->buf = kmalloc(buffer_size, GFP_KERNEL);
+	#endif /* VENDOR_EDIT */
+	/*Anderson-MTP_cant_work*]*/
 	if (!req->buf) {
 		usb_ep_free_request(ep, req);
 		return NULL;
 	}
+
+	/*Anderson-MTP_cant_work+[*/
+	#ifdef VENDOR_EDIT
+	if(useFixAddr == true) {
+		if(buffer_size == INTR_BUFFER_SIZE)
+			mtpBufferOffset += 0x40; /*alignment*/
+		else
+			mtpBufferOffset += buffer_size;
+	}
+	#endif /* VENDOR_EDIT */
+	/*Anderson-MTP_cant_work+]*/
 
 	return req;
 }
@@ -414,7 +449,18 @@ static struct usb_request *mtp_request_new(struct usb_ep *ep, int buffer_size)
 static void mtp_request_free(struct usb_request *req, struct usb_ep *ep)
 {
 	if (req) {
+		/*Anderson-MTP_cant_work*[*/
+		#ifdef VENDOR_EDIT
+		if(useFixAddr == true) {
+			req->buf = NULL;
+			mtpBufferOffset = 0;
+		}
+		else
+			kfree(req->buf);
+		#else
 		kfree(req->buf);
+		#endif
+		/*Anderson-MTP_cant_work+]*/
 		usb_ep_free_request(ep, req);
 	}
 }
@@ -508,7 +554,7 @@ static int mtp_create_bulk_endpoints(struct mtp_dev *dev,
 	struct usb_ep *ep;
 	int i;
 
-	DBG(cdev, "create_bulk_endpoints dev: %p\n", dev);
+	DBG(cdev, "create_bulk_endpoints dev: %pK\n", dev);
 
 	ep = usb_ep_autoconfig(cdev->gadget, in_desc);
 	if (!ep) {
@@ -541,9 +587,27 @@ retry_tx_alloc:
 	if (mtp_tx_req_len > MTP_BULK_BUFFER_SIZE)
 		mtp_tx_reqs = 4;
 
+	#ifdef VENDOR_EDIT
+	/*
+	* References from init.qcom.early_boot.sh. It different with msm8996.
+	* Because if set in init.qcom.usb.sh, it too late int msm8974.
+	*/
+	if(mtp_tx_req_len == 131072 && mtp_rx_req_len == 131072 && mtp_tx_reqs == 4)
+		useFixAddr = true;
+	else
+		useFixAddr = false;
+
+	pr_info("useFixAddr:%s\n", useFixAddr?"true":"false");
+	mtpBufferOffset =0;
+	#endif /* VENDOR_EDIT */
+
 	/* now allocate requests for our endpoints */
 	for (i = 0; i < mtp_tx_reqs; i++) {
+		#ifdef VENDOR_EDIT
+		req = mtp_request_new(dev->ep_in, mtp_tx_req_len, TX_BUFFER);
+		#else
 		req = mtp_request_new(dev->ep_in, mtp_tx_req_len);
+		#endif /* VENDOR_EDIT */
 		if (!req) {
 			if (mtp_tx_req_len <= MTP_BULK_BUFFER_SIZE)
 				goto fail;
@@ -567,8 +631,15 @@ retry_tx_alloc:
 		mtp_rx_req_len = MTP_BULK_BUFFER_SIZE;
 
 retry_rx_alloc:
+	#ifdef VENDOR_EDIT
+	mtpBufferOffset =0;
+	#endif /* VENDOR_EDIT */
 	for (i = 0; i < RX_REQ_MAX; i++) {
+		#ifdef VENDOR_EDIT
+		req = mtp_request_new(dev->ep_out, mtp_rx_req_len, RX_BUFFER);
+		#else
 		req = mtp_request_new(dev->ep_out, mtp_rx_req_len);
+		#endif /* VENDOR_EDIT */
 		if (!req) {
 			if (mtp_rx_req_len <= MTP_BULK_BUFFER_SIZE)
 				goto fail;
@@ -580,8 +651,16 @@ retry_rx_alloc:
 		req->complete = mtp_complete_out;
 		dev->rx_req[i] = req;
 	}
+
+	#ifdef VENDOR_EDIT
+	mtpBufferOffset =0;
+	#endif /* VENDOR_EDIT */
 	for (i = 0; i < INTR_REQ_MAX; i++) {
+		#ifdef VENDOR_EDIT
+		req = mtp_request_new(dev->ep_intr, INTR_BUFFER_SIZE, INTR_BUFFER);
+		#else
 		req = mtp_request_new(dev->ep_intr, INTR_BUFFER_SIZE);
+		#endif /* VENDOR_EDIT */
 		if (!req)
 			goto fail;
 		req->complete = mtp_complete_intr;
@@ -608,6 +687,14 @@ static ssize_t mtp_read(struct file *fp, char __user *buf,
 
 	DBG(cdev, "mtp_read(%zu)\n", count);
 
+	if (dev == NULL || dev->ep_out == NULL)
+		return -ENODEV;
+
+	len = ALIGN(count, dev->ep_out->maxpacket);
+
+	if (len > mtp_rx_req_len)
+		return -EINVAL;
+
 	/* we will block until we're online */
 	DBG(cdev, "mtp_read: waiting for online state\n");
 	ret = wait_event_interruptible(dev->read_wq,
@@ -616,11 +703,6 @@ static ssize_t mtp_read(struct file *fp, char __user *buf,
 		r = ret;
 		goto done;
 	}
-	len = ALIGN(count, dev->ep_out->maxpacket);
-
-	if (len > mtp_rx_req_len)
-		return -EINVAL;
-
 	spin_lock_irq(&dev->lock);
 	if (dev->state == STATE_CANCELED) {
 		/* report cancelation to userspace */
@@ -641,7 +723,7 @@ requeue_req:
 		r = -EIO;
 		goto done;
 	} else {
-		DBG(cdev, "rx %p queue\n", req);
+		DBG(cdev, "rx %pK queue\n", req);
 	}
 
 	/* wait for a request to complete */
@@ -666,7 +748,7 @@ requeue_req:
 		if (req->actual == 0)
 			goto requeue_req;
 
-		DBG(cdev, "rx %p %d\n", req, req->actual);
+		DBG(cdev, "rx %pK %d\n", req, req->actual);
 		xfer = (req->actual < count) ? req->actual : count;
 		r = xfer;
 		if (copy_to_user(buf, req->buf, xfer))
@@ -792,13 +874,17 @@ static void send_file_work(struct work_struct *data)
 	int xfer, ret, hdr_size;
 	int r = 0;
 	int sendZLP = 0;
-	ktime_t start_time;
 
 	/* read our parameters */
 	smp_rmb();
 	filp = dev->xfer_file;
 	offset = dev->xfer_file_offset;
 	count = dev->xfer_file_length;
+
+	if (count < 0) {
+		dev->xfer_result = -EINVAL;
+		return;
+	}
 
 	DBG(cdev, "send_file_work(%lld %lld)\n", offset, count);
 
@@ -842,28 +928,20 @@ static void send_file_work(struct work_struct *data)
 		if (hdr_size) {
 			/* prepend MTP data header */
 			header = (struct mtp_data_header *)req->buf;
-			if (count > MAX_CONTAINER_LENGTH)
-				header->length = MAX_CONTAINER_LENGTH;
-			else
-				header->length = __cpu_to_le32(count);
+			header->length = __cpu_to_le32(count);
 			header->type = __cpu_to_le16(2); /* data packet */
 			header->command = __cpu_to_le16(dev->xfer_command);
 			header->transaction_id =
 					__cpu_to_le32(dev->xfer_transaction_id);
 		}
-		start_time = ktime_get();
+
 		ret = vfs_read(filp, req->buf + hdr_size, xfer - hdr_size,
 								&offset);
 		if (ret < 0) {
 			r = ret;
 			break;
 		}
-
 		xfer = ret + hdr_size;
-		dev->perf[dev->dbg_read_index].vfs_rtime =
-			ktime_to_us(ktime_sub(ktime_get(), start_time));
-		dev->perf[dev->dbg_read_index].vfs_rbytes = xfer;
-		dev->dbg_read_index = (dev->dbg_read_index + 1) % MAX_ITERATION;
 		hdr_size = 0;
 
 		req->length = xfer;
@@ -903,13 +981,17 @@ static void receive_file_work(struct work_struct *data)
 	int64_t count;
 	int ret, cur_buf = 0;
 	int r = 0;
-	ktime_t start_time;
 
 	/* read our parameters */
 	smp_rmb();
 	filp = dev->xfer_file;
 	offset = dev->xfer_file_offset;
 	count = dev->xfer_file_length;
+
+	if (count < 0) {
+		dev->xfer_result = -EINVAL;
+		return;
+	}
 
 	DBG(cdev, "receive_file_work(%lld)\n", count);
 	if (!IS_ALIGNED(count, dev->ep_out->maxpacket))
@@ -936,8 +1018,7 @@ static void receive_file_work(struct work_struct *data)
 		}
 
 		if (write_req) {
-			DBG(cdev, "rx %p %d\n", write_req, write_req->actual);
-			start_time = ktime_get();
+			DBG(cdev, "rx %pK %d\n", write_req, write_req->actual);
 			ret = vfs_write(filp, write_req->buf, write_req->actual,
 				&offset);
 			DBG(cdev, "vfs_write %d\n", ret);
@@ -947,11 +1028,6 @@ static void receive_file_work(struct work_struct *data)
 					dev->state = STATE_ERROR;
 				break;
 			}
-			dev->perf[dev->dbg_write_index].vfs_wtime =
-				ktime_to_us(ktime_sub(ktime_get(), start_time));
-			dev->perf[dev->dbg_write_index].vfs_wbytes = ret;
-			dev->dbg_write_index =
-				(dev->dbg_write_index + 1) % MAX_ITERATION;
 			write_req = NULL;
 		}
 
@@ -1263,18 +1339,14 @@ static int mtp_ctrlrequest(struct usb_composite_dev *cdev,
 	u16	w_value = le16_to_cpu(ctrl->wValue);
 	u16	w_length = le16_to_cpu(ctrl->wLength);
 	unsigned long	flags;
-	bool	ptp_mode = false;
 
 	VDBG(cdev, "mtp_ctrlrequest "
 			"%02x.%02x v%04x i%04x l%u\n",
 			ctrl->bRequestType, ctrl->bRequest,
 			w_value, w_index, w_length);
 
-	if (dev->function.hs_descriptors == hs_ptp_descs)
-		ptp_mode = true;
-
 	/* Handle MTP OS string */
-	if (!ptp_mode && ctrl->bRequestType ==
+	if (ctrl->bRequestType ==
 			(USB_DIR_IN | USB_TYPE_STANDARD | USB_RECIP_DEVICE)
 			&& ctrl->bRequest == USB_REQ_GET_DESCRIPTOR
 			&& (w_value >> 8) == USB_DT_STRING
@@ -1287,7 +1359,7 @@ static int mtp_ctrlrequest(struct usb_composite_dev *cdev,
 		DBG(cdev, "vendor request: %d index: %d value: %d length: %d\n",
 			ctrl->bRequest, w_index, w_value, w_length);
 
-		if (!ptp_mode && ctrl->bRequest == 1
+		if (ctrl->bRequest == 1
 				&& (ctrl->bRequestType & USB_DIR_IN)
 				&& (w_index == 4 || w_index == 5)) {
 			value = (w_length < sizeof(mtp_ext_config_desc) ?
@@ -1358,7 +1430,7 @@ mtp_function_bind(struct usb_configuration *c, struct usb_function *f)
 	int			ret;
 
 	dev->cdev = cdev;
-	DBG(cdev, "mtp_function_bind dev: %p\n", dev);
+	DBG(cdev, "mtp_function_bind dev: %pK\n", dev);
 
 	/* allocate interface ID(s) */
 	id = usb_interface_id(c, f);
@@ -1487,13 +1559,7 @@ static int mtp_bind_config(struct usb_configuration *c, bool ptp_config)
 	printk(KERN_INFO "mtp_bind_config\n");
 
 	/* allocate a string ID for our interface */
-	if (ptp_config && ptp_string_defs[INTERFACE_STRING_INDEX].id == 0) {
-		ret = usb_string_id(c->cdev);
-		if (ret < 0)
-			return ret;
-		ptp_string_defs[INTERFACE_STRING_INDEX].id = ret;
-		ptp_interface_desc.iInterface = ret;
-	} else if (mtp_string_defs[INTERFACE_STRING_INDEX].id == 0) {
+	if (mtp_string_defs[INTERFACE_STRING_INDEX].id == 0) {
 		ret = usb_string_id(c->cdev);
 		if (ret < 0)
 			return ret;
@@ -1503,14 +1569,13 @@ static int mtp_bind_config(struct usb_configuration *c, bool ptp_config)
 
 	dev->cdev = c->cdev;
 	dev->function.name = "mtp";
+	dev->function.strings = mtp_strings;
 	if (ptp_config) {
-		dev->function.strings = ptp_strings;
 		dev->function.fs_descriptors = fs_ptp_descs;
 		dev->function.hs_descriptors = hs_ptp_descs;
 		if (gadget_is_superspeed(c->cdev->gadget))
 			dev->function.ss_descriptors = ss_ptp_descs;
 	} else {
-		dev->function.strings = mtp_strings;
 		dev->function.fs_descriptors = fs_mtp_descs;
 		dev->function.hs_descriptors = hs_mtp_descs;
 		if (gadget_is_superspeed(c->cdev->gadget))
@@ -1522,119 +1587,6 @@ static int mtp_bind_config(struct usb_configuration *c, bool ptp_config)
 	dev->function.disable = mtp_function_disable;
 
 	return usb_add_function(c, &dev->function);
-}
-
-static int debug_mtp_read_stats(struct seq_file *s, void *unused)
-{
-	struct mtp_dev *dev = _mtp_dev;
-	int i;
-	unsigned long flags;
-	unsigned min, max = 0, sum = 0, iteration = 0;
-
-	seq_puts(s, "\n=======================\n");
-	seq_puts(s, "MTP Write Stats:\n");
-	seq_puts(s, "\n=======================\n");
-	spin_lock_irqsave(&dev->lock, flags);
-	min = dev->perf[0].vfs_wtime;
-	for (i = 0; i < MAX_ITERATION; i++) {
-		seq_printf(s, "vfs write: bytes:%ld\t\t time:%d\n",
-				dev->perf[i].vfs_wbytes,
-				dev->perf[i].vfs_wtime);
-		if (dev->perf[i].vfs_wbytes == mtp_rx_req_len) {
-			sum += dev->perf[i].vfs_wtime;
-			if (min > dev->perf[i].vfs_wtime)
-				min = dev->perf[i].vfs_wtime;
-			if (max < dev->perf[i].vfs_wtime)
-				max = dev->perf[i].vfs_wtime;
-			iteration++;
-		}
-	}
-
-	seq_printf(s, "vfs_write(time in usec) min:%d\t max:%d\t avg:%d\n",
-						min, max, sum / iteration);
-	min = max = sum = iteration = 0;
-	seq_puts(s, "\n=======================\n");
-	seq_puts(s, "MTP Read Stats:\n");
-	seq_puts(s, "\n=======================\n");
-
-	min = dev->perf[0].vfs_rtime;
-	for (i = 0; i < MAX_ITERATION; i++) {
-		seq_printf(s, "vfs read: bytes:%ld\t\t time:%d\n",
-				dev->perf[i].vfs_rbytes,
-				dev->perf[i].vfs_rtime);
-		if (dev->perf[i].vfs_rbytes == mtp_tx_req_len) {
-			sum += dev->perf[i].vfs_rtime;
-			if (min > dev->perf[i].vfs_rtime)
-				min = dev->perf[i].vfs_rtime;
-			if (max < dev->perf[i].vfs_rtime)
-				max = dev->perf[i].vfs_rtime;
-			iteration++;
-		}
-	}
-
-	seq_printf(s, "vfs_read(time in usec) min:%d\t max:%d\t avg:%d\n",
-						min, max, sum / iteration);
-	spin_unlock_irqrestore(&dev->lock, flags);
-	return 0;
-}
-
-static ssize_t debug_mtp_reset_stats(struct file *file, const char __user *buf,
-				 size_t count, loff_t *ppos)
-{
-	int clear_stats;
-	unsigned long flags;
-	struct mtp_dev *dev = _mtp_dev;
-
-	if (buf == NULL) {
-		pr_err("[%s] EINVAL\n", __func__);
-		goto done;
-	}
-
-	if (sscanf(buf, "%u", &clear_stats) != 1 || clear_stats != 0) {
-		pr_err("Wrong value. To clear stats, enter value as 0.\n");
-		goto done;
-	}
-
-	spin_lock_irqsave(&dev->lock, flags);
-	memset(&dev->perf[0], 0, MAX_ITERATION * sizeof(dev->perf[0]));
-	dev->dbg_read_index = 0;
-	dev->dbg_write_index = 0;
-	spin_unlock_irqrestore(&dev->lock, flags);
-done:
-	return count;
-}
-
-static int debug_mtp_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, debug_mtp_read_stats, inode->i_private);
-}
-
-static const struct file_operations debug_mtp_ops = {
-	.open = debug_mtp_open,
-	.read = seq_read,
-	.write = debug_mtp_reset_stats,
-};
-
-struct dentry *dent_mtp;
-static void mtp_debugfs_init(void)
-{
-	struct dentry *dent_mtp_status;
-	dent_mtp = debugfs_create_dir("usb_mtp", 0);
-	if (!dent_mtp || IS_ERR(dent_mtp))
-		return;
-
-	dent_mtp_status = debugfs_create_file("status", S_IRUGO | S_IWUSR,
-					dent_mtp, 0, &debug_mtp_ops);
-	if (!dent_mtp_status || IS_ERR(dent_mtp_status)) {
-		debugfs_remove(dent_mtp);
-		dent_mtp = NULL;
-		return;
-	}
-}
-
-static void mtp_debugfs_remove(void)
-{
-	debugfs_remove_recursive(dent_mtp);
 }
 
 static int mtp_setup(void)
@@ -1669,7 +1621,6 @@ static int mtp_setup(void)
 	if (ret)
 		goto err2;
 
-	mtp_debugfs_init();
 	return 0;
 
 err2:
@@ -1688,7 +1639,6 @@ static void mtp_cleanup(void)
 	if (!dev)
 		return;
 
-	mtp_debugfs_remove();
 	misc_deregister(&mtp_device);
 	destroy_workqueue(dev->wq);
 	_mtp_dev = NULL;

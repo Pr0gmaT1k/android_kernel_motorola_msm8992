@@ -23,8 +23,6 @@
 #include <linux/slab.h>
 #include <linux/ipa.h>
 #include <linux/msm-sps.h>
-#include <asm/dma-iommu.h>
-#include <linux/iommu.h>
 #include "ipa_hw_defs.h"
 #include "ipa_ram_mmap.h"
 #include "ipa_reg.h"
@@ -33,11 +31,18 @@
 #define DRV_NAME "ipa"
 #define NAT_DEV_NAME "ipaNatTable"
 #define IPA_COOKIE 0x57831603
+#define IPA_RT_RULE_COOKIE 0x57831604
+#define IPA_RT_TBL_COOKIE 0x57831605
+#define IPA_FLT_COOKIE 0x57831606
+#define IPA_HDR_COOKIE 0x57831607
+#define IPA_PROC_HDR_COOKIE 0x57831608
+
 #define MTU_BYTE 1500
 
-#define IPA_MAX_NUM_PIPES 0x14
+#define IPA_NUM_PIPES 0x14
 #define IPA_SYS_DESC_FIFO_SZ 0x800
 #define IPA_SYS_TX_DATA_DESC_FIFO_SZ 0x1000
+#define IPA_HDR_COOKIE 0x57831607
 #define IPA_LAN_RX_HEADER_LENGTH (2)
 #define IPA_QMAP_HEADER_LENGTH (4)
 #define IPA_DL_CHECKSUM_LENGTH (8)
@@ -48,6 +53,8 @@
 	pr_debug(DRV_NAME " %s:%d " fmt, __func__, __LINE__, ## args)
 #define IPAERR(fmt, args...) \
 	pr_err(DRV_NAME " %s:%d " fmt, __func__, __LINE__, ## args)
+#define IPAERR_RL(fmt, args...) \
+	pr_err_ratelimited(DRV_NAME " %s:%d " fmt, __func__, __LINE__, ## args)
 
 #define WLAN_AMPDU_TX_EP 15
 #define WLAN_PROD_TX_EP  19
@@ -61,7 +68,9 @@
 #define IPA_STATS
 
 #ifdef IPA_STATS
-#define IPA_STATS_INC_CNT(val) (++val)
+#define IPA_STATS_INC_CNT(val) do {			\
+				++val;			\
+			} while (0)
 #define IPA_STATS_DEC_CNT(val) (--val)
 #define IPA_STATS_EXCP_CNT(flags, base) do {			\
 			int i;					\
@@ -139,25 +148,9 @@
 #define MAX_RESOURCE_TO_CLIENTS (IPA_CLIENT_MAX)
 #define IPA_MEM_PART(x_) (ipa_ctx->ctrl->mem_partition.x_)
 
-#define IPA_SMMU_AP_VA_START 0x1000
-#define IPA_SMMU_AP_VA_SIZE 0x40000000
-#define IPA_SMMU_AP_VA_END (IPA_SMMU_AP_VA_START +  IPA_SMMU_AP_VA_SIZE)
-#define IPA_SMMU_UC_VA_START 0x40000000
-#define IPA_SMMU_UC_VA_SIZE 0x20000000
-#define IPA_SMMU_UC_VA_END (IPA_SMMU_UC_VA_START +  IPA_SMMU_UC_VA_SIZE)
-
-
 struct ipa_client_names {
 	enum ipa_client_type names[MAX_RESOURCE_TO_CLIENTS];
 	int length;
-};
-
-struct ipa_smmu_cb_ctx {
-	bool valid;
-	struct device *dev;
-	struct dma_iommu_mapping *mapping;
-	struct iommu_domain *iommu;
-	unsigned long next_addr;
 };
 
 /**
@@ -183,8 +176,8 @@ struct ipa_mem_buffer {
  */
 struct ipa_flt_entry {
 	struct list_head link;
-	struct ipa_flt_rule rule;
 	u32 cookie;
+	struct ipa_flt_rule rule;
 	struct ipa_flt_tbl *tbl;
 	struct ipa_rt_tbl *rt_tbl;
 	u32 hw_len;
@@ -209,13 +202,13 @@ struct ipa_flt_entry {
  */
 struct ipa_rt_tbl {
 	struct list_head link;
+	u32 cookie;
 	struct list_head head_rt_rule_list;
 	char name[IPA_RESOURCE_NAME_MAX];
 	u32 idx;
 	u32 rule_cnt;
 	u32 ref_cnt;
 	struct ipa_rt_tbl_set *set;
-	u32 cookie;
 	bool in_sys;
 	u32 sz;
 	struct ipa_mem_buffer curr_mem;
@@ -246,6 +239,7 @@ struct ipa_rt_tbl {
  */
 struct ipa_hdr_entry {
 	struct list_head link;
+	u32 cookie;
 	u8 hdr[IPA_HDR_MAX_SIZE];
 	u32 hdr_len;
 	char name[IPA_RESOURCE_NAME_MAX];
@@ -255,7 +249,6 @@ struct ipa_hdr_entry {
 	dma_addr_t phys_base;
 	struct ipa_hdr_proc_ctx_entry *proc_ctx;
 	struct ipa_hdr_offset_entry *offset_entry;
-	u32 cookie;
 	u32 ref_cnt;
 	int id;
 	u8 is_eth2_ofst_valid;
@@ -340,10 +333,10 @@ struct ipa_hdr_proc_ctx_add_hdr_cmd_seq {
  */
 struct ipa_hdr_proc_ctx_entry {
 	struct list_head link;
+	u32 cookie;
 	enum ipa_hdr_proc_type type;
 	struct ipa_hdr_proc_ctx_offset_entry *offset_entry;
 	struct ipa_hdr_entry *hdr;
-	u32 cookie;
 	u32 ref_cnt;
 	int id;
 	bool user_deleted;
@@ -399,8 +392,8 @@ struct ipa_flt_tbl {
  */
 struct ipa_rt_entry {
 	struct list_head link;
-	struct ipa_rt_rule rule;
 	u32 cookie;
+	struct ipa_rt_rule rule;
 	struct ipa_rt_tbl *tbl;
 	struct ipa_hdr_entry *hdr;
 	struct ipa_hdr_proc_ctx_entry *proc_ctx;
@@ -502,13 +495,6 @@ struct ipa_wlan_comm_memb {
  * @skip_ep_cfg: boolean field that determines if EP should be configured
  *  by IPA driver
  * @keep_ipa_awake: when true, IPA will not be clock gated
- * @rx_replenish_threshold: Indicates the WM value which requires the RX
- *                          descriptors replenish function to be called to
- *                          avoid the RX pipe to run out of descriptors
- *                          and cause HOLB.
- * @disconnect_in_progress: Indicates client disconnect in progress.
- * @qmi_request_sent: Indicates whether QMI request to enable clear data path
- *					request is sent or not.
  */
 struct ipa_ep_context {
 	int valid;
@@ -536,9 +522,6 @@ struct ipa_ep_context {
 	bool keep_ipa_awake;
 	struct ipa_wlan_stats wstats;
 	u32 wdi_state;
-	u32 rx_replenish_threshold;
-	bool disconnect_in_progress;
-	u32 qmi_request_sent;
 
 	/* sys MUST be the last element of this struct */
 	struct ipa_sys_context *sys;
@@ -574,7 +557,7 @@ struct ipa_sys_context {
 	struct delayed_work switch_to_intr_work;
 	enum ipa_sys_pipe_policy policy;
 	int (*pyld_hdlr)(struct sk_buff *skb, struct ipa_sys_context *sys);
-	struct sk_buff * (*get_skb)(unsigned int len, gfp_t flags);
+	struct sk_buff *(*get_skb)(unsigned int len, gfp_t flags);
 	void (*free_skb)(struct sk_buff *skb);
 	u32 rx_buff_sz;
 	u32 rx_pool_sz;
@@ -589,8 +572,6 @@ struct ipa_sys_context {
 	struct work_struct repl_work;
 	void (*repl_hdlr)(struct ipa_sys_context *sys);
 	struct ipa_repl_ctx repl;
-	unsigned int repl_trig_cnt;
-	unsigned int repl_trig_thresh;
 
 	/* ordering is important - mutable fields go above */
 	struct ipa_ep_context *ep;
@@ -771,8 +752,6 @@ struct ipa_stats {
 	u32 wan_repl_rx_empty;
 	u32 lan_rx_empty;
 	u32 lan_repl_rx_empty;
-	u32 flow_enable;
-	u32 flow_disable;
 };
 
 struct ipa_active_clients {
@@ -780,19 +759,6 @@ struct ipa_active_clients {
 	spinlock_t spinlock;
 	bool mutex_locked;
 	int cnt;
-};
-
-enum ipa_wakelock_ref_client {
-	IPA_WAKELOCK_REF_CLIENT_TX  = 0,
-	IPA_WAKELOCK_REF_CLIENT_LAN_RX = 1,
-	IPA_WAKELOCK_REF_CLIENT_WAN_RX = 2,
-	IPA_WAKELOCK_REF_CLIENT_SPS = 3,
-	IPA_WAKELOCK_REF_CLIENT_MAX
-};
-
-struct ipa_wakelock_ref_cnt {
-	spinlock_t spinlock;
-	u32 cnt;
 };
 
 struct ipa_tag_completion {
@@ -1037,12 +1003,10 @@ union IpaHwMhiDlUlSyncCmdData_t {
  * @uc_sram_mmio: Pointer to uC mapped memory
  * @pending_cmd: The last command sent waiting to be ACKed
  * @uc_status: The last status provided by the uC
- * @uc_zip_error: uC has notified the APPS upon a ZIP engine error
- * @uc_error_type: error type from uC error event
  */
 struct ipa_uc_ctx {
 	bool uc_inited;
-	bool uc_loaded;
+	atomic_t uc_loaded;
 	bool uc_failed;
 	struct mutex uc_lock;
 	struct completion uc_completion;
@@ -1051,12 +1015,11 @@ struct ipa_uc_ctx {
 	u32 uc_event_top_ofst;
 	u32 pending_cmd;
 	u32 uc_status;
-	bool uc_zip_error;
-	u32 uc_error_type;
 };
 
 /**
  * struct ipa_uc_wdi_ctx
+ * @wdi_dma_pool: DMA pool used for WDI operations
  * @wdi_uc_top_ofst:
  * @wdi_uc_top_mmio:
  * @wdi_uc_stats_ofst:
@@ -1064,6 +1027,7 @@ struct ipa_uc_ctx {
  */
 struct ipa_uc_wdi_ctx {
 	/* WDI specific fields */
+	struct dma_pool *wdi_dma_pool;
 	u32 wdi_uc_stats_ofst;
 	struct IpaHwStatsWDIInfoData_t *wdi_uc_stats_mmio;
 	void *priv;
@@ -1072,15 +1036,14 @@ struct ipa_uc_wdi_ctx {
 
 /**
  * struct ipa_sps_pm - SPS power management related members
- * @dec_clients: true if need to decrease active clients count
- * @eot_activity: represent EOT interrupt activity to determine to reset
- *  the inactivity timer
- * @sps_pm_lock: Lock to protect the sps_pm functionality.
+ * @lock: lock for ensuring atomic operations
+ * @res_granted: true if SPS requested IPA resource and IPA granted it
+ * @res_rel_in_prog: true if releasing IPA resource is in progress
  */
 struct ipa_sps_pm {
-	atomic_t dec_clients;
-	atomic_t eot_activity;
-	struct mutex sps_pm_lock;
+	spinlock_t lock;
+	bool res_granted;
+	bool res_rel_in_prog;
 };
 
 /**
@@ -1148,15 +1111,12 @@ struct ipacm_client_info {
  * @tag_process_before_gating: indicates whether to start tag process before
  *  gating IPA clocks
  * @sps_pm: sps power management related information
- * @disconnect_lock: protects LAN_CONS packet receive notification CB
  * @pipe_mem_pool: pipe memory pool
  * @dma_pool: special purpose DMA pool
  * @ipa_active_clients: structure for reference counting connected IPA clients
  * @ipa_hw_type: type of IPA HW type (e.g. IPA 1.0, IPA 1.1 etc')
  * @ipa_hw_mode: mode of IPA HW mode (e.g. Normal, Virtual or over PCIe)
  * @use_ipa_teth_bridge: use tethering bridge driver
- * @ipa_bam_remote_mode: ipa bam is in remote mode
- * @modem_cfg_emb_pipe_flt: modem configure embedded pipe filtering rules
  * @ipa_bus_hdl: msm driver handle for the data path bus
  * @ctrl: holds the core specific operations based on
  *  core version (vtable like)
@@ -1165,11 +1125,6 @@ struct ipacm_client_info {
  * @wcstats: wlan common buffer stats
  * @uc_ctx: uC interface context
  * @uc_wdi_ctx: WDI specific fields for uC interface
- * @ipa_num_pipes: The number of pipes used by IPA HW
- * @skip_uc_pipe_reset: Indicates whether pipe reset via uC needs to be avoided
- * @ipa_client_apps_wan_cons_agg_gro: RMNET_IOCTL_INGRESS_FORMAT_AGG_DATA
- * @w_lock: Indicates the wakeup source.
- * @wakelock_ref_cnt: Indicates the number of times wakelock is acquired
 
  * IPA context - holds all relevant info about IPA driver and its state
  */
@@ -1179,10 +1134,10 @@ struct ipa_context {
 	struct device *dev;
 	struct cdev cdev;
 	unsigned long bam_handle;
-	struct ipa_ep_context ep[IPA_MAX_NUM_PIPES];
-	bool skip_ep_cfg_shadow[IPA_MAX_NUM_PIPES];
+	struct ipa_ep_context ep[IPA_NUM_PIPES];
+	bool skip_ep_cfg_shadow[IPA_NUM_PIPES];
 	bool resume_on_connect[IPA_CLIENT_MAX];
-	struct ipa_flt_tbl flt_tbl[IPA_MAX_NUM_PIPES][IPA_IP_MAX];
+	struct ipa_flt_tbl flt_tbl[IPA_NUM_PIPES][IPA_IP_MAX];
 	void __iomem *mmio;
 	u32 ipa_wrapper_base;
 	struct ipa_flt_tbl glob_flt_tbl[IPA_IP_MAX];
@@ -1230,7 +1185,6 @@ struct ipa_context {
 	u32 clnt_hdl_cmd;
 	u32 clnt_hdl_data_in;
 	u32 clnt_hdl_data_out;
-	spinlock_t disconnect_lock;
 	u8 a5_pipe_index;
 	struct list_head intf_list;
 	struct list_head msg_list;
@@ -1241,7 +1195,6 @@ struct ipa_context {
 	enum ipa_hw_mode ipa_hw_mode;
 	bool use_ipa_teth_bridge;
 	bool ipa_bam_remote_mode;
-	bool modem_cfg_emb_pipe_flt;
 	/* featurize if memory footprint becomes a concern */
 	struct ipa_stats stats;
 	void *smem_pipe_mem;
@@ -1249,12 +1202,10 @@ struct ipa_context {
 	struct ipa_controller *ctrl;
 	struct idr ipa_idr;
 	struct device *pdev;
-	struct device *uc_pdev;
 	spinlock_t idr_lock;
 	u32 enable_clock_scaling;
 	u32 curr_ipa_clk_rate;
 	bool q6_proxy_clk_vote_valid;
-	u32 ipa_num_pipes;
 
 	struct ipa_wlan_comm_memb wc_memb;
 
@@ -1262,22 +1213,8 @@ struct ipa_context {
 
 	struct ipa_uc_wdi_ctx uc_wdi_ctx;
 	u32 wan_rx_ring_size;
-	bool skip_uc_pipe_reset;
-	bool smmu_present;
-	unsigned long peer_bam_iova;
-	phys_addr_t peer_bam_pa;
-	u32 peer_bam_map_size;
-	unsigned long peer_bam_dev;
-	u32 peer_bam_map_cnt;
-	u32 wdi_map_cnt;
-	struct wakeup_source w_lock;
-	struct ipa_wakelock_ref_cnt wakelock_ref_cnt;
-
-	/* RMNET_IOCTL_INGRESS_FORMAT_AGG_DATA */
-	bool ipa_client_apps_wan_cons_agg_gro;
-	bool tethered_flow_control;
 	/* M-release support to know client pipes */
-	struct ipacm_client_info ipacm_client[IPA_MAX_NUM_PIPES];
+	struct ipacm_client_info ipacm_client[IPA_NUM_PIPES];
 };
 
 /**
@@ -1324,10 +1261,7 @@ struct ipa_plat_drv_res {
 	enum ipa_hw_mode ipa_hw_mode;
 	u32 ee;
 	bool ipa_bam_remote_mode;
-	bool modem_cfg_emb_pipe_flt;
 	u32 wan_rx_ring_size;
-	bool skip_uc_pipe_reset;
-	bool tethered_flow_control;
 };
 
 struct ipa_mem_partition {
@@ -1366,8 +1300,6 @@ struct ipa_mem_partition {
 	u16 apps_hdr_proc_ctx_ofst;
 	u16 apps_hdr_proc_ctx_size;
 	u16 apps_hdr_proc_ctx_size_ddr;
-	u16 modem_comp_decomp_ofst;
-	u16 modem_comp_decomp_size;
 	u16 modem_ofst;
 	u16 modem_size;
 	u16 apps_v4_flt_ofst;
@@ -1385,11 +1317,9 @@ struct ipa_mem_partition {
 
 struct ipa_controller {
 	struct ipa_mem_partition mem_partition;
-	u32 ipa_clk_rate_turbo;
-	u32 ipa_clk_rate_nominal;
-	u32 ipa_clk_rate_svs;
-	u32 clock_scaling_bw_threshold_turbo;
-	u32 clock_scaling_bw_threshold_nominal;
+	u32 ipa_clk_rate_hi;
+	u32 ipa_clk_rate_lo;
+	u32 clock_scaling_bw_threshold;
 	u32 ipa_reg_base_ofst;
 	u32 max_holb_tmr_val;
 	void (*ipa_sram_read_settings)(void);
@@ -1547,10 +1477,8 @@ void ipa_lan_rx_cb(void *priv, enum ipa_dp_evt_type evt, unsigned long data);
 
 int _ipa_init_sram_v2(void);
 int _ipa_init_sram_v2_5(void);
-int _ipa_init_sram_v2_6L(void);
 int _ipa_init_hdr_v2(void);
 int _ipa_init_hdr_v2_5(void);
-int _ipa_init_hdr_v2_6L(void);
 int _ipa_init_rt4_v2(void);
 int _ipa_init_rt6_v2(void);
 int _ipa_init_flt4_v2(void);
@@ -1564,13 +1492,10 @@ int __ipa_generate_rt_hw_rule_v2(enum ipa_ip_type ip,
 	struct ipa_rt_entry *entry, u8 *buf);
 int __ipa_generate_rt_hw_rule_v2_5(enum ipa_ip_type ip,
 	struct ipa_rt_entry *entry, u8 *buf);
-int __ipa_generate_rt_hw_rule_v2_6L(enum ipa_ip_type ip,
-	struct ipa_rt_entry *entry, u8 *buf);
 
 int __ipa_commit_hdr_v1_1(void);
 int __ipa_commit_hdr_v2(void);
 int __ipa_commit_hdr_v2_5(void);
-int __ipa_commit_hdr_v2_6L(void);
 int ipa_generate_flt_eq(enum ipa_ip_type ip,
 		const struct ipa_rule_attrib *attrib,
 		struct ipa_ipfltri_rule_eq *eq_attrib);
@@ -1606,10 +1531,9 @@ int ipa_write_qmapid_wdi_pipe(u32 clnt_hdl, u8 qmap_id);
 int ipa_tag_process(struct ipa_desc *desc, int num_descs,
 		    unsigned long timeout);
 
-int ipa_q6_pre_shutdown_cleanup(void);
-int ipa_q6_post_shutdown_cleanup(void);
+int ipa_q6_cleanup(void);
+int ipa_q6_pipe_reset(void);
 int ipa_init_q6_smem(void);
-int ipa_q6_monitor_holb_mitigation(bool enable);
 
 int ipa_sps_connect_safe(struct sps_pipe *h, struct sps_connect *connect,
 			 enum ipa_client_type ipa_client);
@@ -1618,7 +1542,6 @@ int ipa_mhi_handle_ipa_config_req(struct ipa_config_req_msg_v01 *config_req);
 
 int ipa_uc_interface_init(void);
 int ipa_uc_reset_pipe(enum ipa_client_type ipa_client);
-int ipa_uc_monitor_holb(enum ipa_client_type ipa_client, bool enable);
 int ipa_uc_state_check(void);
 int ipa_uc_loaded_check(void);
 int ipa_uc_send_cmd(u32 cmd, u32 opcode, u32 expected_status,
@@ -1646,18 +1569,5 @@ int ipa_uc_mhi_resume_channel(int channelHandle, bool LPTransitionRejected);
 int ipa_uc_mhi_stop_event_update_channel(int channelHandle);
 int ipa_uc_mhi_print_stats(char *dbg_buff, int size);
 int ipa_uc_memcpy(phys_addr_t dest, phys_addr_t src, int len);
-u32 ipa_get_num_pipes(void);
-u32 ipa_get_sys_yellow_wm(void);
-int ipa_smmu_map_peer_bam(unsigned long dev);
-int ipa_smmu_unmap_peer_bam(unsigned long dev);
-struct ipa_smmu_cb_ctx *ipa_get_wlan_smmu_ctx(void);
-struct ipa_smmu_cb_ctx *ipa_get_uc_smmu_ctx(void);
-struct iommu_domain *ipa_get_uc_smmu_domain(void);
-void ipa_suspend_apps_pipes(bool suspend);
-void ipa_update_repl_threshold(enum ipa_client_type ipa_client);
-void ipa_flow_control(enum ipa_client_type ipa_client, bool enable,
-			uint32_t qmap_id);
-void ipa_sps_irq_control_all(bool enable);
-void ipa_inc_acquire_wakelock(enum ipa_wakelock_ref_client ref_client);
-void ipa_dec_release_wakelock(enum ipa_wakelock_ref_client ref_client);
+void ipa_sps_irq_rx_notify_all(void);
 #endif /* _IPA_I_H_ */

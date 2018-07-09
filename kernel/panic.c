@@ -22,6 +22,7 @@
 #include <linux/sysrq.h>
 #include <linux/init.h>
 #include <linux/nmi.h>
+#include <linux/console.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/exception.h>
@@ -48,10 +49,6 @@ ATOMIC_NOTIFIER_HEAD(panic_notifier_list);
 
 EXPORT_SYMBOL(panic_notifier_list);
 
-ATOMIC_NOTIFIER_HEAD(panic_early_notifier_list);
-
-EXPORT_SYMBOL(panic_early_notifier_list);
-
 static long no_blink(int state)
 {
 	return 0;
@@ -69,6 +66,11 @@ void __weak panic_smp_self_stop(void)
 	while (1)
 		cpu_relax();
 }
+//add by jiachenghui for support oem trace,2015/05/09
+#ifdef VENDOR_EDIT
+extern bool is_otrace_on(void);
+#endif  /*VENDOR_EDIT*/
+//end add by jiachenghui for support oem trace,2015/05/09
 
 /**
  *	panic - halt the system
@@ -94,6 +96,19 @@ void panic(const char *fmt, ...)
 	 * after the panic_lock is acquired) from invoking panic again.
 	 */
 	local_irq_disable();
+//add by jiachenghui for support oem trace,2015/05/09
+#ifdef VENDOR_EDIT
+       pr_info("kernel panic because of %s\n", fmt);
+	if(!is_otrace_on()) {
+             if (strcmp(fmt, "modem") == 0)
+                  kernel_restart("modem");
+             else if (strcmp(fmt, "android") == 0)
+                  kernel_restart("android");
+             else
+                  kernel_restart("kernel");
+	}
+#endif  /*VENDOR_EDIT*/
+//end add by jiachenghui for support oem trace,2015/05/09
 
 	/*
 	 * It's possible to come here directly from a panic-assertion and
@@ -136,13 +151,13 @@ void panic(const char *fmt, ...)
 	 */
 	smp_send_stop();
 
-	atomic_notifier_call_chain(&panic_early_notifier_list, 0, buf);
-
 	kmsg_dump(KMSG_DUMP_PANIC);
 
 	atomic_notifier_call_chain(&panic_notifier_list, 0, buf);
 
 	bust_spinlocks(0);
+
+	console_flush_on_panic();
 
 	if (!panic_blink)
 		panic_blink = no_blink;

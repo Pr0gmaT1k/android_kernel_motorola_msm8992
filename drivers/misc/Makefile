@@ -57,26 +57,19 @@ obj-$(CONFIG_VMWARE_VMCI)	+= vmw_vmci/
 obj-$(CONFIG_LATTICE_ECP3_CONFIG)	+= lattice-ecp3-config.o
 obj-$(CONFIG_SRAM)		+= sram.o
 obj-$(CONFIG_UID_CPUTIME) += uid_cputime.o
-obj-$(CONFIG_APANIC_MMC)	+= apanic_mmc.o
 obj-$(CONFIG_TSIF) += msm_tsif.o
 obj-$(CONFIG_HAPTIC_ISA1200)		+= isa1200.o
 obj-$(CONFIG_QSEECOM) += qseecom.o
 ifdef CONFIG_COMPAT
 obj-$(CONFIG_QSEECOM) += compat_qseecom.o
 endif
-obj-$(CONFIG_SEC_DRIVER) += sec/
 obj-$(CONFIG_QFP_FUSE) += qfp_fuse.o
 obj-$(CONFIG_TI_DRV2667) += ti_drv2667.o
 obj-$(CONFIG_QPNP_MISC) += qpnp-misc.o
 obj-$(CONFIG_QCOM_LIQUID_DOCK)	+= qcom_liquid_dock.o
-obj-$(CONFIG_MMI_SLICE_ACCESSORY)	+= moto-slice.o
 obj-y				+= qcom/
-obj-$(CONFIG_HAPTIC_DRV2605)	+= drv2605.o
-obj-$(CONFIG_C55_CTRL) += c55_ctrl.o
-obj-$(CONFIG_SENSORS_MOTOSH) += moto-sensorhub/
-obj-$(CONFIG_MMI_FACTORY) += mmi-factory.o
-obj-$(CONFIG_DROPBOX) += dropbox.o
-obj-$(CONFIG_HOB_SHARED_RAM) += hob_ram_mmap.o
-obj-$(CONFIG_ALSA_TO_H2W) += alsa-to-h2w-headset.o
-obj-$(CONFIG_MOT_UTAG) += utag/
-obj-$(CONFIG_CYPRESS_CAPSENSE_HSSP) += capsense_prog/
+#ifdef VENDOR_EDIT
+#shankai@bsp, 2015/2/2, Add for :drv2605 kernel support 
+obj-$(CONFIG_TI_DRV2605) += ti_drv2605.o
+#endif VENDOR_EDIT
+

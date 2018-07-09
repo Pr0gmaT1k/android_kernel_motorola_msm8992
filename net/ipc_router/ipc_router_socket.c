@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -84,12 +84,7 @@ static struct sk_buff_head *msm_ipc_router_build_msg(unsigned int num_sect,
 			if (last)
 				request_size += align_size;
 
-			if ((SKB_DATA_ALIGN(request_size) + SKB_DATA_ALIGN(
-				sizeof(struct skb_shared_info))) < PAGE_SIZE)
-				msg = alloc_skb(request_size, GFP_KERNEL);
-			else
-				msg = alloc_skb(request_size, GFP_KERNEL |
-					__GFP_NOWARN | __GFP_NORETRY);
+			msg = alloc_skb(request_size, GFP_KERNEL);
 			if (!msg) {
 				if (request_size <= (PAGE_SIZE/2)) {
 					IPC_RTR_ERR(
@@ -495,6 +490,7 @@ static int msm_ipc_router_ioctl(struct socket *sock,
 			break;
 		}
 		server_arg.num_entries_found = ret;
+
 		ret = copy_to_user((void *)arg, &server_arg,
 				   sizeof(server_arg));
 
@@ -503,7 +499,7 @@ static int msm_ipc_router_ioctl(struct socket *sock,
 
 		if (ret == 0 && n) {
 			ret = copy_to_user((void *)(arg + sizeof(server_arg)),
-					   srv_info, n * sizeof (*srv_info));
+					   srv_info, n * sizeof(*srv_info));
 		}
 
 		if (ret)

@@ -16,7 +16,6 @@ Required properties :
 - interrupts: IRQ line
 - interrupt-names: OTG interrupt name(s) referenced in interrupts above
             HSUSB OTG expects "core_irq" which is IRQ line from CORE and
-            "async_irq" from HSPHY for asynchronous wakeup events in LPM.
             optional ones are described in next section.
 - qcom,hsusb-otg-phy-type: PHY type can be one of
 	    1 - Chipidea PHY (obsolete)
@@ -67,6 +66,7 @@ Required properties :
 
 Optional properties :
 - interrupt-names : Optional interrupt resource entries are:
+    "async_irq" : Interrupt from HSPHY for asynchronous wakeup events in LPM.
     "pmic_id_irq" : Interrupt from PMIC for external ID pin notification.
     "phy_irq" : Interrupt from PHY. Used for ID detection.
 - qcom,hsusb-otg-disable-reset: If present then core is RESET only during
@@ -81,8 +81,6 @@ Optional properties :
 	    2 - Host
 - qcom,hsusb-otg-phy-init-seq: PHY configuration sequence. val, reg pairs
   terminate with -1
-- qcom,hsusb-otg-phy-init-seq: PHY configuration sequence in Factory.
-  val, reg pairs terminate with -1
 - qcom,hsusb-otg-power-budget: VBUS power budget in mA
   0 will be treated as 500mA
 - qcom,hsusb-otg-pclk-src-name: The source of pclk
@@ -162,12 +160,6 @@ Optional properties :
 	pull-down resistors during peripheral and host bus suspend without
 	any re-work.
 - qcom,emulation: Indicates that we are running on emulation platform.
-- mpp-id-routing: If present, id is routed through an MPP that can be reconfigured to
-        measure ID Voltage.
-- mpp-id-amux-chan: If present, this is the AMUX chan when id-mpp is Analog Input
-- mpp-id-pull: If present, this is the pull value when id-mpp is Digital Input
-- mpp-id-vin: If present, this is the voltage level when id-mpp is Digital Input
-
 
 Example HSUSB OTG controller device node :
 	usb@f9690000 {

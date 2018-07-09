@@ -26,7 +26,6 @@
 #define SCM_SVC_ES			0x10
 #define SCM_SVC_HDCP			0x11
 #define SCM_SVC_LMH			0x13
-#define SCM_SVC_SMMU_PROGRAM		0x15
 #define SCM_SVC_TZSCHEDULER		0xFC
 
 #define SCM_FUSE_READ			0x7
@@ -122,8 +121,6 @@ extern bool is_scm_armv8(void);
 extern int scm_restore_sec_cfg(u32 device_id, u32 spare, int *scm_ret);
 extern u32 scm_io_read(phys_addr_t address);
 extern int scm_io_write(phys_addr_t address, u32 val);
-
-extern void scm_inv_range(unsigned long start, unsigned long end);
 
 #define SCM_HDCP_MAX_REG 5
 
@@ -224,11 +221,5 @@ static inline int scm_io_write(phys_addr_t address, u32 val)
 {
 	return 0;
 }
-
-static inline void scm_inv_range(unsigned long start, unsigned long end)
-{
-	return;
-}
-
 #endif
 #endif

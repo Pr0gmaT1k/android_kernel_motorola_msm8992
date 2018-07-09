@@ -91,14 +91,14 @@ extern void tcp_time_wait(struct sock *sk, int state, int timeo);
 				 * to ~3sec-8min depending on RTO.
 				 */
 
-#define TCP_RETR2	15	/*
+#define TCP_RETR2	8	/*
 				 * This should take at least
 				 * 90 minutes to time out.
 				 * RFC1122 says that the limit is 100 sec.
 				 * 15 is ~13-30min depending on RTO.
 				 */
 
-#define TCP_SYN_RETRIES	 6	/* This is how many retries are done
+#define TCP_SYN_RETRIES	 4	/* This is how many retries are done
 				 * when active opening a connection.
 				 * RFC1122 says the minimum retry MUST
 				 * be at least 180secs.  Nevertheless
@@ -107,7 +107,7 @@ extern void tcp_time_wait(struct sock *sk, int state, int timeo);
 				 * current initial RTO.
 				 */
 
-#define TCP_SYNACK_RETRIES 5	/* This is how may retries are done
+#define TCP_SYNACK_RETRIES 3	/* This is how may retries are done
 				 * when passive opening a connection.
 				 * This is corresponding to 31secs of
 				 * retransmission with the current
@@ -1044,6 +1044,7 @@ static inline void tcp_prequeue_init(struct tcp_sock *tp)
 }
 
 extern bool tcp_prequeue(struct sock *sk, struct sk_buff *skb);
+int tcp_filter(struct sock *sk, struct sk_buff *skb);
 
 #undef STATE_TRACE
 
@@ -1057,6 +1058,8 @@ static const char *statename[]={
 extern void tcp_set_state(struct sock *sk, int state);
 
 extern void tcp_done(struct sock *sk);
+
+int tcp_abort(struct sock *sk, int err);
 
 static inline void tcp_sack_reset(struct tcp_options_received *rx_opt)
 {
@@ -1607,5 +1610,15 @@ struct tcp_request_sock_ops {
 
 extern void tcp_v4_init(void);
 extern void tcp_init(void);
+
+/* At how many jiffies into the future should the RTO fire? */
+static inline s32 tcp_rto_delta(const struct sock *sk)
+{
+	const struct sk_buff *skb = tcp_write_queue_head(sk);
+	const u32 rto = inet_csk(sk)->icsk_rto;
+	const u32 rto_time_stamp = TCP_SKB_CB(skb)->when + rto;
+
+	return (s32)(rto_time_stamp - tcp_time_stamp);
+}
 
 #endif	/* _TCP_H */

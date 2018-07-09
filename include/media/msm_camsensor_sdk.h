@@ -20,7 +20,7 @@
 #define I2C_SEQ_REG_DATA_MAX    256
 #define I2C_REG_DATA_MAX       (8*1024)
 
-#define MAX_ACTUATOR_REG_TBL_SIZE2 8
+#define MAX_ACTUATOR_REG_TBL_SIZE 8
 #define MAX_ACTUATOR_REGION       5
 #define NUM_ACTUATOR_DIR          2
 #define MAX_ACTUATOR_SCENARIO     8
@@ -78,6 +78,13 @@ enum msm_camera_i2c_data_type {
 	MSM_CAMERA_I2C_SET_WORD_MASK,
 	MSM_CAMERA_I2C_UNSET_WORD_MASK,
 	MSM_CAMERA_I2C_SET_BYTE_WRITE_MASK_DATA,
+//	#ifdef VENDOR_EDIT
+    //added by zhangxiaowei@camera 20150310 for qcom OIS architecture
+	MSM_CAMERA_I2C_NO_DATA,
+   // #endif /*VENDOR_EDIT*/
+#ifdef VENDOR_EDIT // ois burst write
+	MSM_CAMERA_I2C_SEQ_DATA,
+#endif
 	MSM_CAMERA_I2C_DATA_TYPE_MAX,
 };
 
@@ -122,22 +129,11 @@ enum camerab_mode_t {
 enum sensor_stats_type {
 	YRGB,
 	YYYY,
-	PDAF,
 };
 
-/* Need to keep this table aligned with
- * enum msm_camera_i2c_data_type
- */
 enum msm_actuator_data_type {
 	MSM_ACTUATOR_BYTE_DATA = 1,
 	MSM_ACTUATOR_WORD_DATA,
-	MSM_ACTUATOR_DWORD_DATA,
-	MSM_ACTUATOR_SET_BYTE_MASK,
-	MSM_ACTUATOR_UNSET_BYTE_MASK,
-	MSM_ACTUATOR_SET_WORD_MASK,
-	MSM_ACTUATOR_UNSET_WORD_MASK,
-	MSM_ACTUATOR_SET_BYTE_WRITE_MASK_DATA,
-	MSM_ACTUATOR_DATA_TYPE_MAX,
 };
 
 enum msm_actuator_addr_type {
@@ -152,13 +148,11 @@ enum msm_actuator_write_type {
 	MSM_ACTUATOR_WRITE_DIR_REG,
 	MSM_ACTUATOR_POLL,
 	MSM_ACTUATOR_READ_WRITE,
-	MSM_ACTUATOR_WRITE_REG,
 };
 
 enum msm_actuator_i2c_operation {
 	MSM_ACT_WRITE = 0,
 	MSM_ACT_POLL,
-	MSM_ACT_READ_SET,
 };
 
 enum actuator_type {
@@ -166,7 +160,6 @@ enum actuator_type {
 	ACTUATOR_PIEZO,
 	ACTUATOR_HVCM,
 	ACTUATOR_BIVCM,
-	ACTUATOR_MOT_HVCM,
 };
 
 enum msm_flash_driver_type {
@@ -201,6 +194,14 @@ struct msm_sensor_power_setting_array {
 	unsigned short size_down;
 };
 
+
+struct msm_sensor_i2c_sync_params {
+	unsigned int cid;
+	int csid;
+	unsigned short line;
+	unsigned short delay;
+};
+
 struct msm_sensor_init_params {
 	/* mask of modes supported: 2D, 3D */
 	int                 modes_supported;
@@ -224,7 +225,6 @@ struct msm_camera_sensor_slave_info {
 	char flash_name[32];
 	enum msm_sensor_camera_id_t camera_id;
 	unsigned short slave_addr;
-	unsigned short slave_addr2;
 	enum i2c_freq_mode_t i2c_freq_mode;
 	enum msm_camera_i2c_reg_addr_type addr_type;
 	struct msm_sensor_id_info_t sensor_id_info;

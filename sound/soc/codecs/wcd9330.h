@@ -37,7 +37,12 @@
 #define WCD9330_DMIC_CLK_DIV_6 0x03
 #define WCD9330_DMIC_CLK_DIV_16 0x04
 
+#ifndef VENDOR_EDIT
+/*zhiguang.su@MultiMedia.AudioDrv, 2016-01-23, remove unused function*/
 #define TOMTOM_ZDET_SUPPORTED true
+#else
+#define TOMTOM_ZDET_SUPPORTED false
+#endif
 
 #define WCD9330_SPKDRV_OCP_CURR_LIMIT_I_0P0_A	0x0
 #define WCD9330_SPKDRV_OCP_CURR_LIMIT_I_0P375_A 0x1
@@ -56,10 +61,8 @@
 #define WCD9330_SPKDRV_OCP_CURR_LIMIT_I_5P250_A 0xE
 #define WCD9330_SPKDRV_OCP_CURR_LIMIT_I_5P625_A 0xF
 
-#define TOMTOM_NON_CACHE_SIZE 0x100
 extern const u8 tomtom_reg_readable[TOMTOM_CACHE_SIZE];
 extern const u8 tomtom_reset_reg_defaults[TOMTOM_CACHE_SIZE];
-extern const u16 non_cacheable_reg[TOMTOM_NON_CACHE_SIZE];
 struct tomtom_codec_dai_data {
 	u32 rate;
 	u32 *ch_num;

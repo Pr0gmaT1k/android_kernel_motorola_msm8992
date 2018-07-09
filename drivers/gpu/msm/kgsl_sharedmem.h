@@ -1,4 +1,4 @@
-/* Copyright (c) 2002,2007-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2002,2007-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -182,7 +182,6 @@ memdesc_sg_dma(struct kgsl_memdesc *memdesc,
 	 */
 
 	sg_dma_address(memdesc->sg) = addr;
-	memdesc->sglen = 1;
 	return 0;
 }
 
@@ -351,8 +350,47 @@ static inline void kgsl_free_global(struct kgsl_memdesc *memdesc)
 	kgsl_sharedmem_free(memdesc);
 }
 
-int kgsl_heap_init(void);
-struct page *kgsl_heap_alloc(unsigned long size);
-void kgsl_heap_free(struct page *page);
+/**
+ * kgsl_alloc_sgt_from_pages() - Allocate a sg table
+ *
+ * @memdesc: memory descriptor of the allocation
+ *
+ * Allocate and return pointer to a sg table
+ */
+static inline struct sg_table *kgsl_alloc_sgt_from_pages(
+                                struct kgsl_memdesc *m)
+{
+        int ret;
+        struct sg_table *sgt;
+
+        sgt = kmalloc(sizeof(struct sg_table), GFP_KERNEL);
+        if (sgt == NULL)
+                return ERR_PTR(-ENOMEM);
+
+        ret = sg_alloc_table_from_pages(sgt, m->pages, m->page_count, 0,
+                                        m->size, GFP_KERNEL);
+        if (ret) {
+                kfree(sgt);
+                return ERR_PTR(ret);
+        }
+
+        return sgt;
+}
+
+/**
+ * kgsl_free_sgt() - Free a sg table structure
+ *
+ * @sgt: sg table pointer to be freed
+ *
+ * Free the sg table allocated using sgt and free the
+ * sgt structure itself
+ */
+static inline void kgsl_free_sgt(struct sg_table *sgt)
+{
+        if (sgt != NULL) {
+                sg_free_table(sgt);
+                kfree(sgt);
+        }
+}
 
 #endif /* __KGSL_SHAREDMEM_H */

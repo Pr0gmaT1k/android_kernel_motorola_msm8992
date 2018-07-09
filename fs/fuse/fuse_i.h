@@ -160,6 +160,7 @@ struct fuse_file {
 
 	/* the read write file */
 	struct file *rw_lower_file;
+	bool shortcircuit_enabled;
 };
 
 /** One input argument of a request */
@@ -352,6 +353,9 @@ struct fuse_req {
 
 	/** Inode used in the request or NULL */
 	struct inode *inode;
+
+	/** Path used for completing d_canonical_path */
+	struct path *canonical_path;
 
 	/** AIO control block */
 	struct fuse_io_priv *io;
@@ -580,6 +584,11 @@ struct fuse_conn {
 
 	/** number of dentries used in the above array */
 	int ctl_ndents;
+
+#ifdef VENDOR_EDIT
+//liochen@filesystems, 2016/01/04, add for reserved memory
+	unsigned reserved_mem;
+#endif
 
 	/** O_ASYNC requests */
 	struct fasync_struct *fasync;

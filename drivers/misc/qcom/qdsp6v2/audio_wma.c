@@ -65,8 +65,7 @@ static long audio_ioctl_shared(struct file *file, unsigned int cmd,
 		wma_cfg.ch_mask =  wma_config->channelmask;
 		wma_cfg.encode_opt = wma_config->encodeopt;
 		/* Configure Media format block */
-		rc = q6asm_media_format_block_wma(audio->ac, &wma_cfg,
-				audio->ac->stream_id);
+		rc = q6asm_media_format_block_wma(audio->ac, &wma_cfg);
 		if (rc < 0) {
 			pr_err("cmd media format block failed\n");
 			break;
@@ -167,6 +166,8 @@ static long audio_compat_ioctl(struct file *file, unsigned int cmd,
 	case AUDIO_GET_WMA_CONFIG_V2_32: {
 		struct msm_audio_wma_config_v2 *wma_config;
 		struct msm_audio_wma_config_v2_32 wma_config_32;
+
+		memset(&wma_config_32, 0, sizeof(wma_config_32));
 
 		wma_config = (struct msm_audio_wma_config_v2 *)audio->codec_cfg;
 		wma_config_32.format_tag = wma_config->format_tag;

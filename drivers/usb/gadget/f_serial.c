@@ -328,7 +328,7 @@ static struct usb_descriptor_header *gser_ss_function[] = {
 
 /* string descriptors: */
 
-static struct usb_string gser_string_defs[GSERIAL_NO_PORTS+1] = {
+static struct usb_string gser_string_defs[] = {
 	[0].s = "Generic Serial",
 	{  } /* end of list */
 };
@@ -413,7 +413,7 @@ static int gport_connect(struct f_gser *gser)
 	unsigned	port_num;
 	int		ret;
 
-	pr_debug("%s: transport: %s f_gser: %p gserial: %p port_num: %d\n",
+	pr_debug("%s: transport: %s f_gser: %pK gserial: %pK port_num: %d\n",
 			__func__, xport_to_str(gser->transport),
 			gser, &gser->port, gser->port_num);
 
@@ -464,7 +464,7 @@ static int gport_disconnect(struct f_gser *gser)
 
 	port_num = gserial_ports[gser->port_num].client_port_num;
 
-	pr_debug("%s: transport: %s f_gser: %p gserial: %p port_num: %d\n",
+	pr_debug("%s: transport: %s f_gser: %pK gserial: %pK port_num: %d\n",
 			__func__, xport_to_str(gser->transport),
 			gser, &gser->port, gser->port_num);
 
@@ -656,6 +656,7 @@ static void gser_disable(struct usb_function *f)
 #endif
 	gser->online = 0;
 }
+
 #ifdef CONFIG_MODEM_SUPPORT
 static int gser_notify(struct f_gser *gser, u8 type, u16 value,
 		void *data, unsigned length)
@@ -837,14 +838,12 @@ static int gser_bind(struct usb_configuration *c, struct usb_function *f)
 	 */
 
 	/* maybe allocate device-global string ID */
-	if (gser_string_defs[gser->port_num].id == 0) {
+	if (gser_string_defs[0].id == 0) {
 		status = usb_string_id(c->cdev);
 		if (status < 0)
 			return status;
-		gser_string_defs[gser->port_num].id = status;
+		gser_string_defs[0].id = status;
 	}
-	gser_string_defs[gser->port_num].s = gser->port.func.name;
-	gser_interface_desc.iInterface = gser_string_defs[gser->port_num].id;
 
 	/* allocate instance-specific interface IDs */
 	status = usb_interface_id(c, f);

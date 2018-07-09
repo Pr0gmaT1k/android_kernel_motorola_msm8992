@@ -24,7 +24,6 @@
 #include <linux/types.h>
 #include <linux/workqueue.h>
 #include <linux/usb/ch9.h>
-#include <linux/pm_runtime.h>
 
 struct usb_ep;
 
@@ -484,8 +483,6 @@ struct usb_gadget_ops {
 			struct usb_gadget_driver *);
 	int	(*udc_stop)(struct usb_gadget *,
 			struct usb_gadget_driver *);
-	int     (*vbus_set_charge_enabled) (struct usb_gadget *, int is_on);
-	int     (*vbus_get_charge_enabled) (struct usb_gadget *);
 };
 
 /**
@@ -523,8 +520,6 @@ struct usb_gadget_ops {
  *		 Used in case of more then one core operates concurrently.
  * @streaming_enabled: Enable streaming mode with usb core.
  * @xfer_isr_count: UI (transfer complete) interrupts count
- * @bam2bam_func_enabled; Indicates function using bam2bam is enabled or not.
- * @interrupt_num: Interrupt number for the underlying platform device.
  *
  * Gadgets have a mostly-portable "gadget driver" implementing device
  * functions, handling all usb configurations and interfaces.  Gadget
@@ -571,8 +566,6 @@ struct usb_gadget {
 	bool				remote_wakeup;
 	void				*private;
 	u32				xfer_isr_count;
-	bool				bam2bam_func_enabled;
-	int				interrupt_num;
 };
 #define work_to_gadget(w)	(container_of((w), struct usb_gadget, work))
 
@@ -730,47 +723,6 @@ static inline int usb_gadget_vbus_connect(struct usb_gadget *gadget)
 }
 
 /**
- * usb_gadget_set_charge_enabled - Notify controller if charging is allowed
- * unconditionally.
- * @gadget:The device which now has VBUS power.
- * @is_on: charging status
- * Context: can sleep
- *
- * This call is used by a gadget driver to notify the controller if
- * charging is allowed unconditionally. It is assumed by default that
- * charging at full rate(bMaxPower) is allowed only upon a SET_CONFIGURATION
- * from the host.
- *
- * Returns zero on success, else negative errno.
- */
-static inline int usb_gadget_set_charge_enabled(struct usb_gadget *gadget,
-						int is_on)
-{
-	if (!gadget->ops->vbus_set_charge_enabled)
-		return -EOPNOTSUPP;
-	return gadget->ops->vbus_set_charge_enabled(gadget, is_on);
-}
-
-/**
- * usb_gadget_get_charge_enabled - Query the controller if charging is allowed
- * unconditionally.
- * @gadget:The device which now has VBUS power.
- *
- * This call is used by a transceiver driver to query the controller if
- * charging is allowed unconditionally. It is assumed by default that
- * charging at full rate(bMaxPower) is allowed only upon a SET_CONFIGURATION
- * from the host.
- *
- * Returns charging status(0/1) on success, else negative errno.
- */
-static inline int usb_gadget_get_charge_enabled(struct usb_gadget *gadget)
-{
-	if (!gadget->ops->vbus_get_charge_enabled)
-		return -EOPNOTSUPP;
-	return gadget->ops->vbus_get_charge_enabled(gadget);
-}
-
-/**
  * usb_gadget_vbus_draw - constrain controller's VBUS power usage
  * @gadget:The device whose VBUS usage is being described
  * @mA:How much current to draw, in milliAmperes.  This should be twice
@@ -786,6 +738,7 @@ static inline int usb_gadget_vbus_draw(struct usb_gadget *gadget, unsigned mA)
 {
 	if (!gadget->ops->vbus_draw)
 		return -EOPNOTSUPP;
+	pr_info("%s USB setting current is %umA\n", __func__,mA);
 	return gadget->ops->vbus_draw(gadget, mA);
 }
 
@@ -847,127 +800,6 @@ static inline int usb_gadget_disconnect(struct usb_gadget *gadget)
 	return gadget->ops->pullup(gadget, 0);
 }
 
-/**
- * usb_gadget_autopm_get - increment PM-usage counter of usb gadget's parent
- * device.
- * @gadget: usb gadget whose parent device counter is incremented
- *
- * This routine should be called by function driver when it wants to use
- * gadget's parent device and needs to guarantee that it is not suspended. In
- * addition, the routine prevents subsequent autosuspends of gadget's parent
- * device. However if the autoresume fails then the counter is re-decremented.
- *
- * This routine can run only in process context.
- */
-static inline int usb_gadget_autopm_get(struct usb_gadget *gadget)
-{
-	int status = -ENODEV;
-
-	if (!gadget || !gadget->dev.parent)
-		return status;
-
-	status = pm_runtime_get_sync(gadget->dev.parent);
-	if (status < 0)
-		pm_runtime_put_sync(gadget->dev.parent);
-
-	if (status > 0)
-		status = 0;
-	return status;
-}
-
-/**
- * usb_gadget_autopm_get_async - increment PM-usage counter of usb gadget's
- * parent device.
- * @gadget: usb gadget whose parent device counter is incremented
- *
- * This routine increments @gadget parent device PM usage counter and queue an
- * autoresume request if the device is suspended. It does not autoresume device
- * directly (it only queues a request). After a successful call, the device may
- * not yet be resumed.
- *
- * This routine can run in atomic context.
- */
-static inline int usb_gadget_autopm_get_async(struct usb_gadget *gadget)
-{
-	int status = -ENODEV;
-
-	if (!gadget || !gadget->dev.parent)
-		return status;
-
-	status = pm_runtime_get(gadget->dev.parent);
-	if (status < 0 && status != -EINPROGRESS)
-		pm_runtime_put_noidle(gadget->dev.parent);
-
-	if (status > 0 || status == -EINPROGRESS)
-		status = 0;
-	return status;
-}
-
-/**
- * usb_gadget_autopm_get_noresume - increment PM-usage counter of usb gadget's
- * parent device.
- * @gadget: usb gadget whose parent device counter is incremented
- *
- * This routine increments PM-usage count of @gadget parent device but does not
- * carry out an autoresume.
- *
- * This routine can run in atomic context.
- */
-static inline void usb_gadget_autopm_get_noresume(struct usb_gadget *gadget)
-{
-	if (gadget && gadget->dev.parent)
-		pm_runtime_get_noresume(gadget->dev.parent);
-}
-
-/**
- * usb_gadget_autopm_put - decrement PM-usage counter of usb gadget's parent
- * device.
- * @gadget: usb gadget whose parent device counter is decremented.
- *
- * This routine should be called by function driver when it is finished using
- * @gadget parent device and wants to allow it to autosuspend. It decrements
- * PM-usage counter of @gadget parent device, when the counter reaches 0, a
- * delayed autosuspend request is attempted.
- *
- * This routine can run only in process context.
- */
-static inline void usb_gadget_autopm_put(struct usb_gadget *gadget)
-{
-	if (gadget && gadget->dev.parent)
-		pm_runtime_put_sync(gadget->dev.parent);
-}
-
-/**
- * usb_gadget_autopm_put_async - decrement PM-usage counter of usb gadget's
- * parent device.
- * @gadget: usb gadget whose parent device counter is decremented.
- *
- * This routine decrements PM-usage counter of @gadget parent device and
- * schedules a delayed autosuspend request if the counter is <= 0.
- *
- * This routine can run in atomic context.
- */
-static inline void usb_gadget_autopm_put_async(struct usb_gadget *gadget)
-{
-	if (gadget && gadget->dev.parent)
-		pm_runtime_put(gadget->dev.parent);
-}
-
-/**
- * usb_gadget_autopm_put_no_suspend - decrement PM-usage counter of usb gadget's
- * parent device.
- * @gadget: usb gadget whose parent device counter is decremented.
- *
- * This routine decrements PM-usage counter of @gadget parent device but does
- * not carry out an autosuspend.
- *
- * This routine can run in atomic context.
- */
-static inline void usb_gadget_autopm_put_no_suspend(struct usb_gadget *gadget)
-{
-	if (gadget && gadget->dev.parent)
-		pm_runtime_put_noidle(gadget->dev.parent);
-}
 
 /*-------------------------------------------------------------------------*/
 

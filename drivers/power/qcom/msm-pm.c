@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2015,2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -42,6 +42,8 @@
 #include <soc/qcom/jtag.h>
 #include "idle.h"
 #include "pm-boot.h"
+#include "../../../arch/arm/mach-msm/clock.h"
+#include <linux/sched.h>
 
 #define SCM_CMD_TERMINATE_PC	(0x2)
 #define SCM_CMD_CORE_HOTPLUGGED (0x10)
@@ -51,7 +53,7 @@
 
 #define MAX_BUF_SIZE  1024
 
-static int msm_pm_debug_mask = 0;
+static int msm_pm_debug_mask = 1;
 module_param_named(
 	debug_mask, msm_pm_debug_mask, int, S_IRUGO | S_IWUSR | S_IWGRP
 );
@@ -62,9 +64,10 @@ enum {
 	MSM_PM_DEBUG_SUSPEND_LIMITS = BIT(2),
 	MSM_PM_DEBUG_CLOCK = BIT(3),
 	MSM_PM_DEBUG_RESET_VECTOR = BIT(4),
-	MSM_PM_DEBUG_IDLE = BIT(5),
-	MSM_PM_DEBUG_IDLE_LIMITS = BIT(6),
-	MSM_PM_DEBUG_HOTPLUG = BIT(7),
+	MSM_PM_DEBUG_IDLE_CLK = BIT(5),
+	MSM_PM_DEBUG_IDLE = BIT(6),
+	MSM_PM_DEBUG_IDLE_LIMITS = BIT(7),
+	MSM_PM_DEBUG_HOTPLUG = BIT(8),
 };
 
 enum msm_pc_count_offsets {
@@ -87,6 +90,7 @@ static long *msm_pc_debug_counters;
 
 static cpumask_t retention_cpus;
 static DEFINE_SPINLOCK(retention_lock);
+static DEFINE_MUTEX(msm_pc_debug_mutex);
 
 static bool msm_pm_is_L1_writeback(void)
 {
@@ -271,7 +275,7 @@ static bool __ref msm_pm_spm_power_collapse(
 		!cpu_suspend(0, msm_pm_collapse) : msm_pm_pc_hotplug();
 #else
 	collapsed = save_cpu_regs ?
-		!__cpu_suspend(0, msm_pm_collapse) : msm_pm_pc_hotplug();
+		!cpu_suspend(0) : msm_pm_pc_hotplug();
 #endif
 
 	msm_jtag_restore_state();
@@ -359,6 +363,14 @@ static bool msm_pm_power_collapse(bool from_idle)
 	if (MSM_PM_DEBUG_POWER_COLLAPSE & msm_pm_debug_mask)
 		pr_info("CPU%u: %s: pre power down\n", cpu, __func__);
 
+	/* This spews a lot of messages when a core is hotplugged. This
+	 * information is most useful from last core going down during
+	 * power collapse
+	 */
+	if ((!from_idle && cpu_online(cpu))
+			|| (MSM_PM_DEBUG_IDLE_CLK & msm_pm_debug_mask))
+		clock_debug_print_enabled();
+
 	avsdscr = avs_get_avsdscr();
 	avscsr = avs_get_avscsr();
 	avs_set_avscsr(0); /* Disable AVS */
@@ -417,9 +429,11 @@ bool msm_cpu_pm_enter_sleep(enum msm_pm_sleep_mode mode, bool from_idle)
 
 	if ((!from_idle  && cpu_online(cpu))
 			|| (MSM_PM_DEBUG_IDLE & msm_pm_debug_mask))
-		pr_info("CPU%u:%s mode:%d during %s\n", cpu, __func__,
-				mode, from_idle ? "idle" : "suspend");
-
+		{
+			pr_info("CPU%u:%s mode:%d during %s\n", cpu, __func__,
+					mode, from_idle ? "idle" : "suspend");
+			sched_set_boost(0);//Wujialong 20160126 disable sched_boost when going to sleep
+		}
 	if (execute[mode])
 		exit_stat = execute[mode](from_idle);
 
@@ -704,33 +718,48 @@ static ssize_t msm_pc_debug_counters_file_read(struct file *file,
 		char __user *bufu, size_t count, loff_t *ppos)
 {
 	struct msm_pc_debug_counters_buffer *data;
+	ssize_t ret;
 
+	mutex_lock(&msm_pc_debug_mutex);
 	data = file->private_data;
 
-	if (!data)
-		return -EINVAL;
+	if (!data) {
+		ret = -EINVAL;
+		goto exit;
+	}
 
-	if (!bufu)
-		return -EINVAL;
+	if (!bufu) {
+		ret = -EINVAL;
+		goto exit;
+	}
 
-	if (!access_ok(VERIFY_WRITE, bufu, count))
-		return -EFAULT;
+	if (!access_ok(VERIFY_WRITE, bufu, count)) {
+		ret = -EFAULT;
+		goto exit;
+	}
 
 	if (*ppos >= data->len && data->len == 0)
 		data->len = msm_pc_debug_counters_copy(data);
 
-	return simple_read_from_buffer(bufu, count, ppos,
+	ret = simple_read_from_buffer(bufu, count, ppos,
 			data->buf, data->len);
+exit:
+	mutex_unlock(&msm_pc_debug_mutex);
+	return ret;
 }
 
 static int msm_pc_debug_counters_file_open(struct inode *inode,
 		struct file *file)
 {
 	struct msm_pc_debug_counters_buffer *buf;
+	int ret = 0;
 
+	mutex_lock(&msm_pc_debug_mutex);
 
-	if (!inode->i_private)
-		return -EINVAL;
+	if (!inode->i_private) {
+		ret = -EINVAL;
+		goto exit;
+	}
 
 	file->private_data = kzalloc(
 		sizeof(struct msm_pc_debug_counters_buffer), GFP_KERNEL);
@@ -739,19 +768,24 @@ static int msm_pc_debug_counters_file_open(struct inode *inode,
 		pr_err("%s: ERROR kmalloc failed to allocate %zu bytes\n",
 		__func__, sizeof(struct msm_pc_debug_counters_buffer));
 
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto exit;
 	}
 
 	buf = file->private_data;
 	buf->reg = (long *)inode->i_private;
 
-	return 0;
+exit:
+	mutex_unlock(&msm_pc_debug_mutex);
+	return ret;
 }
 
 static int msm_pc_debug_counters_file_close(struct inode *inode,
 		struct file *file)
 {
+	mutex_lock(&msm_pc_debug_mutex);
 	kfree(file->private_data);
+	mutex_unlock(&msm_pc_debug_mutex);
 	return 0;
 }
 
@@ -779,7 +813,7 @@ static int msm_pm_clk_init(struct platform_device *pdev)
 	for_each_possible_cpu(cpu) {
 		struct clk *clk;
 		snprintf(clk_name, sizeof(clk_name), "cpu%d_clk", cpu);
-		clk = clk_get(&pdev->dev, clk_name);
+		clk = devm_clk_get(&pdev->dev, clk_name);
 		if (IS_ERR(clk)) {
 			if (cpu && synced_clocks)
 				return 0;
@@ -792,7 +826,7 @@ static int msm_pm_clk_init(struct platform_device *pdev)
 	if (synced_clocks)
 		return 0;
 
-	l2_clk = clk_get(&pdev->dev, "l2_clk");
+	l2_clk = devm_clk_get(&pdev->dev, "l2_clk");
 	if (IS_ERR(l2_clk))
 		pr_warn("%s: Could not get l2_clk (-%ld)\n", __func__,
 			PTR_ERR(l2_clk));

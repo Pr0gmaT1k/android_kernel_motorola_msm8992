@@ -45,6 +45,7 @@
 #include <linux/poll.h>
 #include <linux/irq_work.h>
 #include <linux/utsname.h>
+#include <linux/rtc.h>
 
 #include <asm/uaccess.h>
 
@@ -54,6 +55,13 @@
 #ifdef CONFIG_EARLY_PRINTK_DIRECT
 extern void printascii(char *);
 #endif
+
+/*Anderson-Fix_kmsg_timestamp_error-01+[*/
+#ifdef VENDOR_EDIT
+static bool print_wall_time = 0;
+module_param_named(print_wall_time, print_wall_time, bool, S_IRUGO | S_IWUSR);
+#endif //VENDOR_EDIT
+/*Anderson-Fix_kmsg_timestamp_error-01+]*/
 
 /* printk's without a loglevel use this.. */
 #define DEFAULT_MESSAGE_LOGLEVEL CONFIG_DEFAULT_MESSAGE_LOGLEVEL
@@ -215,7 +223,6 @@ struct log {
 #if defined(CONFIG_LOG_BUF_MAGIC)
 	u32 magic;		/* handle for ramdump analysis tools */
 #endif
-	u8 cpu;			/* which cpu that print the message*/
 };
 
 /*
@@ -407,14 +414,90 @@ static void log_oops_store(struct log *msg)
 }
 #endif
 
+/*Anderson-Fix_kmsg_timestamp_error-01+[*/
+#ifdef VENDOR_EDIT
+enum log_flags prevflag = LOG_NEWLINE;
+int __getnstimeofday(struct timespec *ts);
+#endif //VENDOR_EDIT
+/*Anderson-Fix_kmsg_timestamp_error-01+]*/
+
 /* insert record into the buffer, discard old ones, update heads */
 static void log_store(int facility, int level,
 		      enum log_flags flags, u64 ts_nsec,
 		      const char *dict, u16 dict_len,
-		      const char *text, u16 text_len, u32 cpu)
+		      const char *text, u16 text_len)
 {
 	struct log *msg;
 	u32 size, pad_len;
+/*Anderson-Fix_kmsg_timestamp_error-01+[*/
+#ifdef VENDOR_EDIT
+	static bool time_showed ;
+	static char timebuf[LOG_LINE_MAX];
+	static char testbuf[64];
+       size_t tm_pre, tmp_len;
+	size_t text_lengh;
+	char *tm_text = timebuf;
+	char *next;
+	size_t len = 0;
+	bool prefix = true;
+	unsigned long rem_usec;
+	struct timespec tspec;
+	struct rtc_time tm;
+	u64 tms_nsec;
+
+	tms_nsec = local_clock();
+	if(print_wall_time && (tms_nsec > 20)){
+		__getnstimeofday(&tspec);
+		rem_usec = tspec.tv_nsec;
+		tspec.tv_sec += 8*60*60; //Trasfer to Beijing time, UTC + 8
+		rtc_time_to_tm(tspec.tv_sec, &tm);
+
+		if ((prevflag & LOG_CONT) && !((flags&0x1f) & LOG_PREFIX))
+			prefix = false;
+
+		if ( (flags&0x1f)  & LOG_CONT) {
+			if ((prevflag & LOG_CONT) && !(prevflag & LOG_NEWLINE))
+				prefix = false;
+		}
+
+		if (prefix){
+		   tmp_len = text_len;
+		   do {
+			   if(tmp_len+1 <= 0){
+					len--;
+					break;
+			    }
+			    next = memchr(text, '\n', text_len);
+			    if (next) {
+					text_lengh = next - text;
+					next++;
+					tmp_len -= next - text;
+
+			    } else {
+					text_lengh = tmp_len;
+			    }
+			    if (sprintf(testbuf, "[%02d%02d%02d_%02d:%02d:%02d.%06lu]@%d ", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,tm.tm_hour, tm.tm_min, tm.tm_sec,rem_usec / 1000,smp_processor_id() ) + text_lengh + 1 >= LOG_LINE_MAX - len)
+	                          break;
+			    time_showed = true;
+	                  tm_pre = sprintf(tm_text+len, "[%02d%02d%02d_%02d:%02d:%02d.%06lu]@%d ",tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,tm.tm_hour, tm.tm_min, tm.tm_sec,rem_usec / 1000,smp_processor_id());
+	                  len += tm_pre;
+	                  memcpy(tm_text + len, text, text_lengh);
+	                  len += text_lengh;
+			    if (next){
+			        tm_text[len++] = '\n';
+			    }
+			    text = next;
+		      } while (text);
+	            text = tm_text;
+		     text_len = len;
+		}
+		prevflag =  flags & 0x1f;
+	}
+	else{
+		time_showed = false;
+	}
+#endif //VENDOR_EDIT
+/*Anderson-Fix_kmsg_timestamp_error-01+]*/
 
 	/* number of '\0' padding bytes to next message */
 	size = sizeof(struct log) + text_len + dict_len;
@@ -465,9 +548,14 @@ static void log_store(int facility, int level,
 		msg->ts_nsec = ts_nsec;
 	else
 		msg->ts_nsec = local_clock();
+/*Anderson-Fix_kmsg_timestamp_error-01+[*/
+#ifdef VENDOR_EDIT
+	if(time_showed)
+		msg->ts_nsec = -1;
+#endif //VENDOR_EDIT
+/*Anderson-Fix_kmsg_timestamp_error-01+]*/
 	memset(log_dict(msg) + dict_len, 0, pad_len);
 	msg->len = sizeof(struct log) + text_len + dict_len + pad_len;
-	msg->cpu = (u8)cpu;
 
 	/* insert message */
 	log_next_idx += msg->len;
@@ -960,7 +1048,18 @@ early_param("ignore_loglevel", ignore_loglevel_setup);
 module_param(ignore_loglevel, bool, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(ignore_loglevel, "ignore loglevel setting, to"
 	"print all kernel messages to the console.");
+#ifdef VENDOR_EDIT
+static int __init ftm_console_silent_setup(char *str)
+{
+	printk(KERN_INFO "ftm_silent_log\n");
+	console_silent();
 
+	return 0;
+}
+
+early_param("ftm_console_silent", ftm_console_silent_setup);
+
+#endif
 #ifdef CONFIG_BOOT_PRINTK_DELAY
 
 static int boot_delay; /* msecs delay after each printk during bootup */
@@ -1023,21 +1122,27 @@ static bool printk_time;
 #endif
 module_param_named(time, printk_time, bool, S_IRUGO | S_IWUSR);
 
-static size_t print_time(u64 ts, char *buf, u8 cpu)
+static size_t print_time(u64 ts, char *buf)
 {
 	unsigned long rem_nsec;
 
 	if (!printk_time)
 		return 0;
 
+/*Anderson-Fix_kmsg_timestamp_error-01+[*/
+#ifdef VENDOR_EDIT
+	if(ts == -1)
+		return 0;
+#endif //VENDOR_EDIT
+/*Anderson-Fix_kmsg_timestamp_error-01+]*/
+
 	rem_nsec = do_div(ts, 1000000000);
 
 	if (!buf)
-		return snprintf(NULL, 0, "[%5lu.000000,%u] ",
-			(unsigned long)ts, cpu);
+		return snprintf(NULL, 0, "[%5lu.000000] ", (unsigned long)ts);
 
-	return sprintf(buf, "[%5lu.%06lu,%u] ",
-		       (unsigned long)ts, rem_nsec / 1000, cpu);
+	return sprintf(buf, "[%5lu.%06lu] ",
+		       (unsigned long)ts, rem_nsec / 1000);
 }
 
 static size_t print_prefix(const struct log *msg, bool syslog, char *buf)
@@ -1059,8 +1164,7 @@ static size_t print_prefix(const struct log *msg, bool syslog, char *buf)
 		}
 	}
 
-	len += print_time(msg->ts_nsec, buf ? buf + len : NULL,
-				msg->cpu);
+	len += print_time(msg->ts_nsec, buf ? buf + len : NULL);
 	return len;
 }
 
@@ -1562,7 +1666,7 @@ static void call_console_drivers(int level, const char *text, size_t len)
 {
 	struct console *con;
 
-	trace_console(text, len);
+	trace_console_rcuidle(text, len);
 
 	if (level >= console_loglevel && !ignore_loglevel)
 		return;
@@ -1697,20 +1801,15 @@ static struct cont {
 	u8 facility;			/* log level of first message */
 	enum log_flags flags;		/* prefix, newline flags */
 	bool flushed:1;			/* buffer sealed and committed */
-	u8 cpu;				/* which cpu is using the cont*/
 } cont;
 
 static void cont_flush(enum log_flags flags)
 {
-	u32 this_cpu;
-
 	if (cont.flushed)
 		return;
 	if (cont.len == 0)
 		return;
 
-	this_cpu = smp_processor_id();
-	cont.cpu = (u8)this_cpu;
 	if (cont.cons) {
 		/*
 		 * If a fragment of this line was directly flushed to the
@@ -1718,8 +1817,7 @@ static void cont_flush(enum log_flags flags)
 		 * line. LOG_NOCONS suppresses a duplicated output.
 		 */
 		log_store(cont.facility, cont.level, flags | LOG_NOCONS,
-			  cont.ts_nsec, NULL, 0, cont.buf, cont.len,
-			  this_cpu);
+			  cont.ts_nsec, NULL, 0, cont.buf, cont.len);
 		cont.flags = flags;
 		cont.flushed = true;
 	} else {
@@ -1728,7 +1826,7 @@ static void cont_flush(enum log_flags flags)
 		 * just submit it to the store and free the buffer.
 		 */
 		log_store(cont.facility, cont.level, flags, 0,
-			  NULL, 0, cont.buf, cont.len, this_cpu);
+			  NULL, 0, cont.buf, cont.len);
 		cont.len = 0;
 	}
 }
@@ -1769,7 +1867,7 @@ static size_t cont_print_text(char *text, size_t size)
 	size_t len;
 
 	if (cont.cons == 0 && (console_prev & LOG_NEWLINE)) {
-		textlen += print_time(cont.ts_nsec, text, cont.cpu);
+		textlen += print_time(cont.ts_nsec, text);
 		size -= textlen;
 	}
 
@@ -1841,7 +1939,7 @@ asmlinkage int vprintk_emit(int facility, int level,
 		printed_len += strlen(recursion_msg);
 		/* emit KERN_CRIT message */
 		log_store(0, 2, LOG_PREFIX|LOG_NEWLINE, 0,
-			  NULL, 0, recursion_msg, printed_len, this_cpu);
+			  NULL, 0, recursion_msg, printed_len);
 	}
 
 	/*
@@ -1897,7 +1995,7 @@ asmlinkage int vprintk_emit(int facility, int level,
 		/* buffer line if possible, otherwise store it right away */
 		if (!cont_add(facility, level, text, text_len))
 			log_store(facility, level, lflags | LOG_CONT, 0,
-				  dict, dictlen, text, text_len, this_cpu);
+				  dict, dictlen, text, text_len);
 	} else {
 		bool stored = false;
 
@@ -1915,7 +2013,7 @@ asmlinkage int vprintk_emit(int facility, int level,
 
 		if (!stored)
 			log_store(facility, level, lflags, 0,
-				  dict, dictlen, text, text_len, this_cpu);
+				  dict, dictlen, text, text_len);
 	}
 	printed_len += text_len;
 
@@ -2355,13 +2453,24 @@ void console_unlock(void)
 	static u64 seen_seq;
 	unsigned long flags;
 	bool wake_klogd = false;
-	bool retry;
+	bool do_cond_resched, retry;
 
 	if (console_suspended) {
 		up(&console_sem);
 		return;
 	}
 
+	/*
+	 * Console drivers are called under logbuf_lock, so
+	 * @console_may_schedule should be cleared before; however, we may
+	 * end up dumping a lot of lines, for example, if called from
+	 * console registration path, and should invoke cond_resched()
+	 * between lines if allowable.  Not doing so can cause a very long
+	 * scheduling stall on a slow console leading to RCU stall and
+	 * softlockup warnings which exacerbate the issue with more
+	 * messages practically incapacitating the system.
+	 */
+	do_cond_resched = console_may_schedule;
 	console_may_schedule = 0;
 
 	/* flush buffered message fragment immediately to console */
@@ -2418,6 +2527,9 @@ skip:
 		call_console_drivers(level, text, len);
 		start_critical_timings();
 		local_irq_restore(flags);
+
+		if (do_cond_resched)
+			cond_resched();
 	}
 	console_locked = 0;
 	mutex_release(&console_lock_dep_map, 1, _RET_IP_);
@@ -2483,6 +2595,25 @@ void console_unblank(void)
 	for_each_console(c)
 		if ((c->flags & CON_ENABLED) && c->unblank)
 			c->unblank();
+	console_unlock();
+}
+
+/**
+ * console_flush_on_panic - flush console content on panic
+ *
+ * Immediately output all pending messages no matter what.
+ */
+void console_flush_on_panic(void)
+{
+	/*
+	 * If someone else is holding the console lock, trylock will fail
+	 * and may_schedule may be set.  Ignore and proceed to unlock so
+	 * that messages are flushed out.  As this can be called from any
+	 * context and we don't want to get preempted while flushing,
+	 * ensure may_schedule is cleared.
+	 */
+	console_trylock();
+	console_may_schedule = 0;
 	console_unlock();
 }
 

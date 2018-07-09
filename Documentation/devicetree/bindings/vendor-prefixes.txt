@@ -20,7 +20,6 @@ cavium	Cavium, Inc.
 chrp	Common Hardware Reference Platform
 cirrus	Cirrus Logic, Inc.
 cortina	Cortina Systems, Inc.
-cypress Cypress Semiconductor Corporation
 dallas	Maxim Integrated Products (formerly Dallas Semiconductor)
 denx	Denx Software Engineering
 di	Dyna Image Corporation
@@ -77,8 +76,6 @@ sirf	SiRF Technology, Inc.
 sne	Sony
 snps 	Synopsys, Inc.
 st	STMicroelectronics
-stm     STMicroelectronics
-motosh  Motorola Sensorhub
 ste	ST-Ericsson
 stericsson	ST-Ericsson
 synaptics	Synaptics Inc.

@@ -64,9 +64,6 @@ dtb-$(CONFIG_ARCH_MSM8909) += msm8909-sim.dtb \
 	msm8208-1gb-rcm.dtb \
 	msm8208-qhd-cdp.dtb \
 	msm8208-qhd-rcm.dtb
-
-# Do not include QC default DTBs if not needed
-ifneq ($(CONFIG_MMI_DEVICE_DTBS),y)
 dtb-$(CONFIG_ARCH_MSM8916) += msm8916-sim.dtb \
 	msm8916-rumi.dtb \
 	msm8916-cdp.dtb \
@@ -117,7 +114,6 @@ dtb-$(CONFIG_ARCH_MSM8916) += msm8916-sim.dtb \
 	msm8929-qrd-skul.dtb \
 	msm8929-qrd-skulb.dtb \
 	msm8929-cdp-jdi.dtb
-endif # CONFIG_MMI_DEVICE_DTBS
 dtb-$(CONFIG_ARCH_MSM8226) += msm8226-sim.dtb \
 	msm8226-fluid.dtb \
 	msm8226-v1-cdp.dtb \
@@ -228,45 +224,18 @@ dtb-$(CONFIG_ARCH_APQ8084) += apq8084-v1.0-old-pwr-grid-liquid.dtb \
 	apq8084-v1.1-old-pwr-grid-mdm9x35-alt-cdp.dtb \
 	apq8084-v1.1-mdm9x35-alt-cdp.dtb \
 	apq8084-v1.1-sbc.dtb
-
-# Do not include QC default DTBs if not needed
-ifneq ($(CONFIG_MMI_DEVICE_DTBS),y)
-dtb-$(CONFIG_ARCH_MSM8994) += msm8994-v1-sim.dtb \
-	msm8994-rumi.dtb \
-	msm8994-v1-cdp.dtb \
-	msm8994-pmi8994-pm8004-v1-cdp.dtb \
-	msm8994-v1-mtp.dtb \
-	msm8994-pmi8994-pm8004-v1-mtp.dtb \
-	msm8994-v1-liquid.dtb \
-	msm8994-v1-fluid.dtb \
-	apq8094-v1-cdp.dtb \
-	apq8094-v1-mtp.dtb \
-	apq8094-v1-liquid.dtb \
-	apq8094-v1-fluid.dtb \
-	apq8094-v1-dragonboard.dtb \
-	msm8994-v2-sim.dtb \
-	msm8994-v2.0-cdp.dtb \
-	msm8994-pmi8994-pm8004-v2.0-cdp.dtb \
-	msm8994-v2.0-mtp.dtb \
-	msm8994-pmi8994-pm8004-v2.0-mtp.dtb \
-	msm8994-v2.0-liquid.dtb \
-	msm8994-v2.0-fluid.dtb \
-	apq8094-v2.0-cdp.dtb \
-	apq8094-v2.0-mtp.dtb \
-	apq8094-v2.0-liquid.dtb \
-	apq8094-v2.0-fluid.dtb \
-	apq8094-v2.0-dragonboard.dtb \
-	msm8994-v2.1-mtp.dtb \
-	msm8994-v2.1-cdp.dtb \
-	msm8994-v2.1-liquid.dtb \
-	msm8994-v2.1-fluid.dtb \
-	msm8994-pmi8994-pm8004-v2.1-cdp.dtb \
-	msm8994-pmi8994-pm8004-v2.1-mtp.dtb \
-	apq8094-v2.1-cdp.dtb \
-	apq8094-v2.1-mtp.dtb \
-	apq8094-v2.1-liquid.dtb \
-	apq8094-v2.1-fluid.dtb \
-	apq8094-v2.1-dragonboard.dtb
+dtb-$(CONFIG_ARCH_MSM8994) += msm8994-v1-mtp_14049_HW_14.dtb \
+	msm8994-v2.0-mtp_14049_HW_14.dtb \
+	msm8994-v2.1-mtp_14049_HW_14.dtb \
+	msm8994-v1-mtp_14049_HW_13.dtb \
+	msm8994-v2.0-mtp_14049_HW_13.dtb \
+	msm8994-v2.1-mtp_14049_HW_13.dtb \
+	msm8994-v1-mtp_14049_HW_12.dtb \
+	msm8994-v2.0-mtp_14049_HW_12.dtb \
+	msm8994-v2.1-mtp_14049_HW_12.dtb \
+	msm8994-v1-mtp_14049_HW_11.dtb \
+	msm8994-v2.0-mtp_14049_HW_11.dtb \
+	msm8994-v2.1-mtp_14049_HW_11.dtb
 
 dtb-$(CONFIG_ARCH_MSM8992) += msm8992-sim.dtb \
 	msm8992-rumi.dtb \
@@ -274,37 +243,6 @@ dtb-$(CONFIG_ARCH_MSM8992) += msm8992-sim.dtb \
 	msm8992-mtp.dtb \
 	msm8992-pmi8994-pm8004-cdp.dtb \
 	msm8992-pmi8994-pm8004-mtp.dtb
-endif # CONFIG_MMI_DEVICE_DTBS
-
-# Motorola DTB definitions
-ifneq ($(CONFIG_ARCH_MSM8992),y)
-dtb-$(CONFIG_ARCH_MSM8994) += msm8994-bunkerhill-p201.dtb
-endif
-
-dtb-$(CONFIG_ARCH_MSM8992) += msm8992-clark-p0.dtb
-dtb-$(CONFIG_ARCH_MSM8992) += msm8992-clark-p1.dtb
-dtb-$(CONFIG_ARCH_MSM8992) += msm8992-clark-p1b.dtb
-dtb-$(CONFIG_ARCH_MSM8992) += msm8992-clark-p2a.dtb
-dtb-$(CONFIG_ARCH_MSM8992) += msm8992-clark-p2b.dtb
-dtb-$(CONFIG_ARCH_MSM8992) += msm8992-clark-p2d.dtb
-dtb-$(CONFIG_ARCH_MSM8992) += msm8992-clark-p3b.dtb
-
-ifneq ($(CONFIG_ARCH_MSM8992),y)
-dtb-$(CONFIG_ARCH_MSM8994) += msm8994-kinzie-p1.dtb
-dtb-$(CONFIG_ARCH_MSM8994) += msm8994-kinzie-p1-v2.1.dtb
-dtb-$(CONFIG_ARCH_MSM8994) += msm8994-kinzie-p101.dtb
-dtb-$(CONFIG_ARCH_MSM8994) += msm8994-kinzie-p2.dtb
-dtb-$(CONFIG_ARCH_MSM8994) += msm8994-kinzie-p2b.dtb
-dtb-$(CONFIG_ARCH_MSM8994) += msm8994-kinzie-p2c.dtb
-dtb-$(CONFIG_ARCH_MSM8994) += msm8994-kinzie-p3.dtb
-dtb-$(CONFIG_ARCH_MSM8994) += msm8994-kinzie-p301.dtb
-endif
-
-ifeq ($(CONFIG_MMI_DEVICE_DTBS),y)
-# Add 1k of padding to the DTBs to allow for environment variables
-# to be runtime added by the bootloader (i.e. /chosen properties)
-DTC_FLAGS := -p 1024
-endif
 
 DTB_NAMES := $(subst $\",,$(CONFIG_BUILD_ARM_APPENDED_DTB_IMAGE_NAMES))
 ifneq ($(DTB_NAMES),)

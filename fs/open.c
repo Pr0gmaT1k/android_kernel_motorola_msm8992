@@ -33,6 +33,7 @@
 #include <linux/compat.h>
 
 #include "internal.h"
+#include "../kernel/sched/sched.h"
 
 int do_truncate2(struct vfsmount *mnt, struct dentry *dentry, loff_t length,
 		unsigned int time_attrs, struct file *filp)
@@ -693,6 +694,10 @@ static int do_dentry_open(struct file *f,
 		return 0;
 	}
 
+	if (S_ISREG(inode->i_mode))
+		f->f_mode |= FMODE_SPLICE_WRITE | FMODE_SPLICE_READ;
+
+
 	f->f_op = fops_get(inode->i_fop);
 
 	error = security_file_open(f, cred);
@@ -935,6 +940,7 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 	struct filename *tmp = getname(filename);
 	int fd = PTR_ERR(tmp);
 
+	skip_cfs_throttle(1);
 	if (!IS_ERR(tmp)) {
 		fd = get_unused_fd_flags(flags);
 		if (fd >= 0) {
@@ -949,6 +955,7 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 		}
 		putname(tmp);
 	}
+	skip_cfs_throttle(0);
 	return fd;
 }
 

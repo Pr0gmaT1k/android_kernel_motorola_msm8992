@@ -563,11 +563,6 @@ int snd_pcm_update_hw_ptr(struct snd_pcm_substream *substream)
 	return snd_pcm_update_hw_ptr0(substream, 0);
 }
 
-int snd_pcm_update_delay_blk(struct snd_pcm_substream *substream)
-{
-	return substream->ops->delay_blk(substream);
-}
-
 /**
  * snd_pcm_set_ops - set the PCM operators
  * @pcm: the pcm instance
@@ -1875,10 +1870,10 @@ void snd_pcm_period_elapsed(struct snd_pcm_substream *substream)
 	if (substream->timer_running)
 		snd_timer_interrupt(substream->timer, 1);
  _end:
-	if (runtime->transfer_ack_end)
-		runtime->transfer_ack_end(substream);
 	kill_fasync(&runtime->fasync, SIGIO, POLL_IN);
 	snd_pcm_stream_unlock_irqrestore(substream, flags);
+	if (runtime->transfer_ack_end)
+		runtime->transfer_ack_end(substream);
 }
 
 EXPORT_SYMBOL(snd_pcm_period_elapsed);

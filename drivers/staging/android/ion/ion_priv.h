@@ -1,8 +1,8 @@
 /*
- * drivers/gpu/ion/ion_priv.h
+ * drivers/staging/android/ion/ion_priv.h
  *
  * Copyright (C) 2011 Google, Inc.
- * Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2011-2014,2017, The Linux Foundation. All rights reserved.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -33,8 +33,6 @@
 
 #include "ion.h"
 
-#define ION_ALLOC_CLIENT_NAME_SIZE 64
-
 struct ion_buffer *ion_handle_buffer(struct ion_handle *handle);
 
 /**
@@ -63,7 +61,6 @@ struct ion_buffer *ion_handle_buffer(struct ion_handle *handle);
  *			handle, used for debugging
  * @pid:		pid of last client to reference this buffer in a
  *			handle, used for debugging
- * @alloc_client_name   name of original allocator, used for debugging
 */
 struct ion_buffer {
 	struct kref ref;
@@ -91,7 +88,6 @@ struct ion_buffer {
 	int handle_count;
 	char task_comm[TASK_COMM_LEN];
 	pid_t pid;
-	char alloc_client_name[ION_ALLOC_CLIENT_NAME_SIZE];
 };
 void ion_buffer_destroy(struct ion_buffer *buffer);
 
@@ -434,7 +430,8 @@ int ion_page_pool_shrink(struct ion_page_pool *pool, gfp_t gfp_mask,
 void ion_pages_sync_for_device(struct device *dev, struct page *page,
 		size_t size, enum dma_data_direction dir);
 
-int ion_walk_heaps(struct ion_client *client, int heap_id, void *data,
+int ion_walk_heaps(struct ion_client *client, int heap_id,
+			enum ion_heap_type type, void *data,
 			int (*f)(struct ion_heap *heap, void *data));
 
 struct ion_handle *ion_handle_get_by_id(struct ion_client *client,

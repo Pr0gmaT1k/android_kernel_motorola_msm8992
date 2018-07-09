@@ -1,4 +1,4 @@
-/* Copyright (c) 2008-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2008-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -39,9 +39,6 @@
 #include "diag_masks.h"
 #include "diag_usb.h"
 #include "diag_mux.h"
-#ifdef CONFIG_DIAG_EXTENSION
-#include "diagaddon_slate.h"
-#endif /* CONFIG_DIAG_EXTENSION */
 
 #define STM_CMD_VERSION_OFFSET	4
 #define STM_CMD_MASK_OFFSET	5
@@ -663,7 +660,9 @@ void diag_smd_send_req(struct diag_smd_info *smd_info)
 			}
 		}
 
-		if (smd_info->type != SMD_CNTL_TYPE || buf_full)
+		if ((smd_info->type != SMD_CNTL_TYPE &&
+				smd_info->type != SMD_CMD_TYPE)
+					|| buf_full)
 			break;
 
 		}
@@ -811,7 +810,7 @@ void diag_update_pkt_buffer(unsigned char *buf, int type)
 	}
 
 	if (!ptr || length == 0) {
-		pr_err("diag: Invalid ptr %p and length %d in %s",
+		pr_err("diag: Invalid ptr %pK and length %d in %s",
 						ptr, length, __func__);
 		return;
 	}
@@ -924,7 +923,7 @@ int diag_process_stm_cmd(unsigned char *buf, unsigned char *dest_buf)
 	int i;
 
 	if (!buf || !dest_buf) {
-		pr_err("diag: Invalid pointers buf: %p, dest_buf %p in %s\n",
+		pr_err("diag: Invalid pointers buf: %pK, dest_buf %pK in %s\n",
 		       buf, dest_buf, __func__);
 		return -EIO;
 	}
@@ -1012,7 +1011,7 @@ int diag_cmd_log_on_demand(unsigned char *src_buf, int src_len,
 		return 0;
 
 	if (!src_buf || !dest_buf || src_len <= 0 || dest_len <= 0) {
-		pr_err("diag: Invalid input in %s, src_buf: %p, src_len: %d, dest_buf: %p, dest_len: %d",
+		pr_err("diag: Invalid input in %s, src_buf: %pK, src_len: %d, dest_buf: %pK, dest_len: %d",
 		       __func__, src_buf, src_len, dest_buf, dest_len);
 		return -EINVAL;
 	}
@@ -1303,18 +1302,6 @@ void diag_process_hdlc(void *data, unsigned len)
 	hdlc.escaping = 0;
 
 	ret = diag_hdlc_decode(&hdlc);
-	/*
-	 * If the message is 3 bytes or less in length then the message is
-	 * too short. A message will need 4 bytes minimum, since there are
-	 * 2 bytes for the CRC and 1 byte for the ending 0x7e for the hdlc
-	 * encoding
-	 */
-	if (hdlc.dest_idx < 4) {
-		pr_err_ratelimited("diag: In %s, message is too short, len: %d,"
-			" dest len: %d\n", __func__, len, hdlc.dest_idx);
-		mutex_unlock(&driver->diag_hdlc_mutex);
-		return;
-	}
 	if (ret) {
 		crc_chk = crc_check(hdlc.dest_ptr, hdlc.dest_idx);
 		if (crc_chk) {
@@ -1614,30 +1601,6 @@ static struct diag_mux_ops diagfwd_mux_ops = {
 	.read_done = diagfwd_mux_read_done,
 	.write_done = diagfwd_mux_write_done
 };
-
-#ifdef CONFIG_DIAG_EXTENSION
-int diag_addon_register(struct diag_addon *addon)
-{
-	if (addon == NULL)
-		return -EPERM;
-
-	addon->diag_process_apps_pkt = diag_process_apps_pkt;
-	addon->channel_diag_write = diag_usb_write;
-	list_add_tail(&addon->list, &driver->addon_list);
-	return 0;
-}
-EXPORT_SYMBOL(diag_addon_register);
-
-int diag_addon_unregister(struct diag_addon *addon)
-{
-	if (addon == NULL)
-		return -EPERM;
-
-	list_del(&addon->list);
-	return 0;
-}
-EXPORT_SYMBOL(diag_addon_unregister);
-#endif
 
 void diag_smd_notify(void *ctxt, unsigned event)
 {
@@ -2074,7 +2037,7 @@ int diag_smd_write(struct diag_smd_info *smd_info, void *buf, int len)
 	int max_retries = 3;
 
 	if (!smd_info || !buf || len <= 0) {
-		pr_err_ratelimited("diag: In %s, invalid params, smd_info: %p, buf: %p, len: %d\n",
+		pr_err_ratelimited("diag: In %s, invalid params, smd_info: %pK, buf: %pK, len: %d\n",
 				   __func__, smd_info, buf, len);
 		return -EINVAL;
 	}
@@ -2113,9 +2076,6 @@ int diagfwd_init(void)
 	wrap_count = 0;
 	diag_debug_buf_idx = 0;
 	driver->use_device_tree = has_device_tree();
-#ifdef CONFIG_DIAG_EXTENSION
-	INIT_LIST_HEAD(&driver->addon_list);
-#endif
 	for (i = 0; i < DIAG_NUM_PROC; i++)
 		driver->real_time_mode[i] = 1;
 	driver->supports_separate_cmdrsp = device_supports_separate_cmdrsp();

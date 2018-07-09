@@ -32,13 +32,10 @@ struct panel_id {
 /* worst case prefill lines for all chipsets including all vertical blank */
 #define MDSS_MDP_MAX_PREFILL_FETCH 25
 
-enum cabc_mode {
-	CABC_UI_MODE = 0,
-	CABC_ST_MODE,
-	CABC_MV_MODE,
-	CABC_OFF_MODE,
-	CABC_MODE_MAX_NUM
-};
+#define OVERRIDE_CFG	"override"
+#define SIM_PANEL	"sim"
+#define SIM_SW_TE_PANEL	"sim-swte"
+#define SIM_HW_TE_PANEL	"sim-hwte"
 
 /* panel type list */
 #define NO_PANEL		0xffff	/* No Panel */
@@ -115,6 +112,21 @@ enum {
 	MODE_GPIO_NOT_VALID = 0,
 	MODE_GPIO_HIGH,
 	MODE_GPIO_LOW,
+};
+
+/*
+ * enum sim_panel_modes - Different panel modes for simulator panels
+ *
+ * @SIM_MODE:		Disables all host reads for video mode simulator panels.
+ * @SIM_SW_TE_MODE:	Disables all host reads and genereates the SW TE. Used
+ *                      for cmd mode simulator panels.
+ * @SIM_HW_TE_MODE:	Disables all host reads and expects TE from hardware
+ *                      (terminator card). Used for cmd mode simulator panels.
+ */
+enum {
+	SIM_MODE = 1,
+	SIM_SW_TE_MODE,
+	SIM_HW_TE_MODE,
 };
 
 struct mdss_rect {
@@ -205,10 +217,6 @@ struct mdss_intf_recovery {
  *				the panel.
  * @MDSS_EVENT_PANEL_TIMING_SWITCH: Panel timing switch is requested.
  *				Argument provided is new panel timing.
- * @MDSS_EVENT_ENABLE_TE: Change TE state, used for factory testing only
- * @MDSS_EVENT_ENABLE_HBM:     Enable "High Brightness Mode" feature on panel
- * @MDSS_EVENT_ENABLE_ACL:     Enable "Auto Current Limit" feature on panel
- * @MDSS_EVENT_SET_CABC: Set CABC mode, for Motorola "Dynamic CABC" feature.
  */
 enum mdss_intf_events {
 	MDSS_EVENT_RESET = 1,
@@ -236,10 +244,6 @@ enum mdss_intf_events {
 	MDSS_EVENT_DSI_RECONFIG_CMD,
 	MDSS_EVENT_DSI_RESET_WRITE_PTR,
 	MDSS_EVENT_PANEL_TIMING_SWITCH,
-	MDSS_EVENT_ENABLE_TE,
-	MDSS_EVENT_ENABLE_HBM,
-	MDSS_EVENT_ENABLE_ACL,
-	MDSS_EVENT_SET_CABC,
 };
 
 struct lcd_panel_info {
@@ -347,7 +351,6 @@ struct mipi_panel_info {
 
 	char lp11_init;
 	u32  init_delay;
-	u32  post_init_delay;
 };
 
 struct edp_panel_info {
@@ -465,12 +468,7 @@ struct mdss_panel_info {
 	u32 partial_update_roi_merge;
 	struct ion_handle *splash_ihdl;
 	int panel_power_state;
-	bool panel_power_initialized;
 	int blank_state;
-	bool hbm_feature_enabled;
-	bool hbm_state;
-	bool acl_feature_enabled;
-	bool acl_state;
 
 	uint32_t panel_dead;
 	u32 panel_force_dead;
@@ -481,9 +479,10 @@ struct mdss_panel_info {
 
 	bool is_prim_panel;
 
+	/* refer sim_panel_modes enum for different modes */
+	u8 sim_panel_mode;
+
 	char panel_name[MDSS_MAX_PANEL_LEN];
-	char panel_family_name[MDSS_MAX_PANEL_LEN];
-	u32 panel_ver;
 	struct mdss_mdp_pp_tear_check te;
 
 	struct lcd_panel_info lcdc;
@@ -492,9 +491,6 @@ struct mdss_panel_info {
 	struct lvds_panel_info lvds;
 	struct edp_panel_info edp;
 
-	u32 quickdraw_enabled;
-	bool dynamic_cabc_enabled;
-	enum cabc_mode cabc_mode;
 	struct mdss_livedisplay_ctx *livedisplay;
 
 	/* debugfs structure for the panel */
@@ -552,12 +548,11 @@ struct mdss_panel_data {
 	bool active;
 
 	struct mdss_panel_data *next;
-	struct mdss_panel_data *prev;
-	struct msm_fb_data_type *mfd;
 };
 
 struct mdss_panel_debugfs_info {
 	struct dentry *root;
+	struct dentry *parent;
 	struct mdss_panel_info panel_info;
 	u32 override_flag;
 	struct mdss_panel_debugfs_info *next;
@@ -744,24 +739,13 @@ int mdss_panel_get_boot_cfg(void);
  * returns true if mdss is ready, else returns false.
  */
 bool mdss_is_ready(void);
-
+int mdss_rect_cmp(struct mdss_rect *rect1, struct mdss_rect *rect2);
 
 /**
- * mdss_panel_map_cabc_name() - get panel CABC mode name
- *
- * returns name if mapping succeeds, else returns NULL.
+ * mdss_panel_override_te_params() - overrides TE params to enable SW TE
+ * @pinfo: panel info
  */
-static const char *cabc_mode_names[CABC_MODE_MAX_NUM] = {
-	"UI", "ST", "MV", "OFF"
-};
-static inline const char *mdss_panel_map_cabc_name(int mode)
-{
-	if (mode >= CABC_UI_MODE && mode < CABC_MODE_MAX_NUM)
-		return cabc_mode_names[mode];
-	return NULL;
-}
-
-int mdss_rect_cmp(struct mdss_rect *rect1, struct mdss_rect *rect2);
+void mdss_panel_override_te_params(struct mdss_panel_info *pinfo);
 
 #ifdef CONFIG_FB_MSM_MDSS
 int mdss_panel_debugfs_init(struct mdss_panel_info *panel_info);

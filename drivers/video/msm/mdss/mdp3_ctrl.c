@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2015, 2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -1167,12 +1167,8 @@ static int mdp3_ctrl_display_commit_kickoff(struct msm_fb_data_type *mfd,
 	}
 
 	if (mdp3_session->first_commit) {
-		/*wait to ensure frame is sent to panel*/
-		if (panel_info->mipi.post_init_delay)
-			msleep(((1000 / panel_info->mipi.frame_rate) + 1) *
-					panel_info->mipi.post_init_delay);
-		else
-			msleep(1000 / panel_info->mipi.frame_rate);
+		/*wait for one frame time to ensure frame is sent to panel*/
+		msleep(1000 / panel_info->mipi.frame_rate);
 		mdp3_session->first_commit = false;
 	}
 
@@ -1957,9 +1953,10 @@ static int mdp3_ctrl_lut_config(struct msm_fb_data_type *mfd,
 
 	dma = mdp3_session->dma;
 
-	if (cfg->cmap.start > MDP_LUT_SIZE || cfg->cmap.len > MDP_LUT_SIZE ||
-	    (cfg->cmap.start + cfg->cmap.len > MDP_LUT_SIZE)) {
-		pr_err("mdp3_ctrl_lut_config invalid arguments\n");
+	if ((cfg->cmap.start > MDP_LUT_SIZE) ||
+		(cfg->cmap.len > MDP_LUT_SIZE) ||
+		(cfg->cmap.start + cfg->cmap.len > MDP_LUT_SIZE)) {
+		pr_err("Invalid arguments.\n");
 		return  -EINVAL;
 	}
 

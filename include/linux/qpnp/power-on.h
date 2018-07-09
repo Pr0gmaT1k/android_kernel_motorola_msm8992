@@ -54,17 +54,24 @@ enum pon_restart_reason {
 	PON_RESTART_REASON_RTC		= 0x03,
 };
 
-#define RESET_EXTRA_RESET_KUNPOW_REASON	BIT(9)
-#define RESET_EXTRA_POST_PANIC_REASON	(BIT(4) | BIT(5))
-#define RESET_EXTRA_POST_PMICWDT_REASON	BIT(5)
-#define RESET_EXTRA_POST_WDT_REASON	BIT(4)
-#define RESET_EXTRA_POST_REBOOT_MASK	(BIT(4) | BIT(5) | BIT(6))
-#define RESET_EXTRA_PANIC_REASON	BIT(3)
-#define RESET_EXTRA_REBOOT_BL_REASON	BIT(2)
-#define RESET_EXTRA_HW_RESET_REASON	BIT(1)
-
-#define QPNP_PON_KEY_RESIN_BIT		BIT(1)
-extern int qpnp_pon_key_status;
+#ifdef VENDOR_EDIT
+/* add by yangrujin@bsp 2015/10/27, define reboot mode magic*/
+#define FASTBOOT_MODE          0x77665500
+#define RECOVERY_MODE          0x77665502
+#define ALARM_BOOT             0x77665503
+//#define DM_VERITY_LOGGING    0x77665508
+//#define DM_VERITY_ENFORCING  0x77665509
+//#define DM_VERITY_KEYSCLEAR  0x7766550A
+#define FACTORY_MODE           0x77665504
+#define WLAN_MODE              0x77665505
+#define RF_MODE                0x77665506
+#define MOS_MODE               0x77665507
+#define KERNEL_MODE            0x7766550d
+#define ANDROID_MODE           0x7766550c
+#define MODEM_MODE             0x7766550b
+#define NORMAL_MODE            0xFEFEFEFE
+#define INVALID_MODE           0xFFFFFFFF
+#endif
 
 #ifdef CONFIG_QPNP_POWER_ON
 int qpnp_pon_system_pwr_off(enum pon_power_off_type type);
@@ -74,7 +81,6 @@ int qpnp_pon_wd_config(bool enable);
 int qpnp_pon_set_restart_reason(enum pon_restart_reason reason);
 bool qpnp_pon_check_hard_reset_stored(void);
 
-int qpnp_pon_store_extra_reset_info(u16 mask, u16 val);
 #else
 static int qpnp_pon_system_pwr_off(enum pon_power_off_type type)
 {
@@ -97,10 +103,6 @@ static inline int qpnp_pon_set_restart_reason(enum pon_restart_reason reason)
 static inline bool qpnp_pon_check_hard_reset_stored(void)
 {
 	return false;
-}
-static inline int qpnp_pon_store_extra_reset_info(u16 mask, u16 val)
-{
-	return -ENODEV;
 }
 #endif
 

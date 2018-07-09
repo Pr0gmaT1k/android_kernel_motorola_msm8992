@@ -58,7 +58,7 @@ TRACE_EVENT(cpu_frequency_switch_start,
 	TP_STRUCT__entry(
 		__field(	u32,		start_freq	)
 		__field(	u32,		end_freq	)
-		__field(	u32,		cpu_id		)
+		__field(        u32,            cpu_id          )
 	),
 
 	TP_fast_assign(
@@ -70,6 +70,31 @@ TRACE_EVENT(cpu_frequency_switch_start,
 	TP_printk("start=%lu end=%lu cpu_id=%lu",
 		  (unsigned long)__entry->start_freq,
 		  (unsigned long)__entry->end_freq,
+		  (unsigned long)__entry->cpu_id)
+);
+
+TRACE_EVENT(cpu_frequency_limits,
+
+	TP_PROTO(unsigned int max_freq, unsigned int min_freq,
+		unsigned int cpu_id),
+
+	TP_ARGS(max_freq, min_freq, cpu_id),
+
+	TP_STRUCT__entry(
+		__field(	u32,		min_freq	)
+		__field(	u32,		max_freq	)
+		__field(	u32,		cpu_id		)
+	),
+
+	TP_fast_assign(
+		__entry->min_freq = min_freq;
+		__entry->max_freq = min_freq;
+		__entry->cpu_id = cpu_id;
+	),
+
+	TP_printk("min=%lu max=%lu cpu_id=%lu",
+		  (unsigned long)__entry->min_freq,
+		  (unsigned long)__entry->max_freq,
 		  (unsigned long)__entry->cpu_id)
 );
 
@@ -370,6 +395,51 @@ TRACE_EVENT(core_ctl_set_busy,
 		  __entry->cpu, __entry->busy, __entry->old_is_busy,
 		  __entry->is_busy)
 );
+
+#ifdef VENDOR_EDIT
+TRACE_EVENT(hcube_eval_need,
+
+	TP_PROTO(unsigned int cpu, unsigned int old_need,
+		 unsigned int new_need, unsigned int updated),
+	TP_ARGS(cpu, old_need, new_need, updated),
+	TP_STRUCT__entry(
+		__field(u32, cpu)
+		__field(u32, old_need)
+		__field(u32, new_need)
+		__field(u32, updated)
+	),
+	TP_fast_assign(
+		__entry->cpu = cpu;
+		__entry->old_need = old_need;
+		__entry->new_need = new_need;
+		__entry->updated = updated;
+	),
+	TP_printk("cpu=%u, old_need=%u, new_need=%u, updated=%u", __entry->cpu,
+		  __entry->old_need, __entry->new_need, __entry->updated)
+);
+
+TRACE_EVENT(hcube_set_busy,
+
+	TP_PROTO(unsigned int cpu, unsigned int busy,
+		 unsigned int old_is_busy, unsigned int is_busy),
+	TP_ARGS(cpu, busy, old_is_busy, is_busy),
+	TP_STRUCT__entry(
+		__field(u32, cpu)
+		__field(u32, busy)
+		__field(u32, old_is_busy)
+		__field(u32, is_busy)
+	),
+	TP_fast_assign(
+		__entry->cpu = cpu;
+		__entry->busy = busy;
+		__entry->old_is_busy = old_is_busy;
+		__entry->is_busy = is_busy;
+	),
+	TP_printk("cpu=%u, busy=%u, old_is_busy=%u, new_is_busy=%u",
+		  __entry->cpu, __entry->busy, __entry->old_is_busy,
+		  __entry->is_busy)
+);
+#endif
 
 DECLARE_EVENT_CLASS(kpm_module2,
 

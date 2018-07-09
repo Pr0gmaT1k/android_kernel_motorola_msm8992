@@ -34,6 +34,7 @@
 #include <linux/pm_runtime.h>
 #include <linux/kernel.h>
 #include <linux/gpio.h>
+#include <sound/sounddebug.h>
 #include "wcd9330.h"
 #include "wcd9xxx-resmgr.h"
 #include "wcd9xxx-common.h"
@@ -88,8 +89,17 @@ module_param(cpe_debug_mode, int,
 MODULE_PARM_DESC(cpe_debug_mode, "boot cpe in debug mode");
 
 static atomic_t kp_tomtom_priv;
-
+#ifndef VENDOR_EDIT
+//Kangjirui@MultMedia.Audio, 2015/05/14, Modify for change class h amp to class ab
+/*
 static int high_perf_mode;
+*/
+#else /* VENDOR_EDIT */
+static int high_perf_mode = 1;
+#endif /* VENDOR_EDIT */
+
+
+
 module_param(high_perf_mode, int,
 			S_IRUGO | S_IWUSR | S_IWGRP);
 MODULE_PARM_DESC(high_perf_mode, "enable/disable class AB config for hph");
@@ -357,7 +367,8 @@ static struct afe_param_id_clip_bank_sel clip_bank_sel = {
 #define TOMTOM_MCLK_CLK_9P6MHZ 9600000
 
 #define TOMTOM_FORMATS_S16_S24_LE (SNDRV_PCM_FMTBIT_S16_LE | \
-			SNDRV_PCM_FMTBIT_S24_LE)
+			SNDRV_PCM_FORMAT_S24_LE | \
+			SNDRV_PCM_FMTBIT_S24_3LE)
 
 #define TOMTOM_FORMATS (SNDRV_PCM_FMTBIT_S16_LE)
 
@@ -528,6 +539,7 @@ struct tomtom_priv {
 	s32 dmic_5_6_clk_cnt;
 	s32 ldo_h_users;
 	s32 micb_2_users;
+	s32 micb_3_users;
 
 	u32 anc_slot;
 	bool anc_func;
@@ -589,6 +601,12 @@ struct tomtom_priv {
 	/* to track the status */
 	unsigned long status_mask;
 };
+
+#ifdef VENDOR_EDIT
+/*wangdongdong@MultiMedia.AudioDrv, 2015-03-24, Modify for headset uevent*/
+    struct tomtom_priv *priv_headset_type;
+#endif
+
 
 static const u32 comp_shift[] = {
 	4, /* Compander 0's clock source is on interpolator 7 */
@@ -671,6 +689,36 @@ static unsigned short tx_digital_gain_reg[] = {
 	TOMTOM_A_CDC_TX9_VOL_CTL_GAIN,
 	TOMTOM_A_CDC_TX10_VOL_CTL_GAIN,
 };
+
+#ifdef VENDOR_EDIT
+/*wangdongdong@MultiMedia.AudioDrv, 2015-03-24, Modify for headset uevent*/
+enum 
+{
+	NO_DEVICE	= 0,
+	HS_WITH_MIC	= 1,
+	HS_WITHOUT_MIC = 2,
+};
+static ssize_t wcd9xxx_print_name(struct switch_dev *sdev, char *buf)
+{
+	switch (switch_get_state(sdev)) 
+	{
+		case NO_DEVICE:
+			return sprintf(buf, "No Device\n");
+		case HS_WITH_MIC:
+            if(priv_headset_type->mbhc.mbhc_cfg->headset_type == 1) {
+		        return sprintf(buf, "American Headset\n");
+            } else {
+                return sprintf(buf, "Headset\n");
+            }
+           
+		case HS_WITHOUT_MIC:
+			return sprintf(buf, "Handset\n");
+
+	}
+	return -EINVAL;
+}
+#endif
+
 
 int tomtom_enable_qfuse_sensing(struct snd_soc_codec *codec)
 {
@@ -1128,22 +1176,21 @@ static int tomtom_config_compander(struct snd_soc_dapm_widget *w,
 	pr_debug("%s: %s event %d compander %d, enabled %d", __func__,
 		 w->name, event, comp, tomtom->comp_enabled[comp]);
 
+	if (!tomtom->comp_enabled[comp])
+		return 0;
+
 	/* Compander 0 has two channels */
 	mask = enable_mask = 0x03;
 	buck_mv = tomtom_codec_get_buck_mv(codec);
 
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
-		if (!tomtom->comp_enabled[comp])
-			break;
-
 		/* If EAR PA is enabled then compander should not be enabled */
 		if ((snd_soc_read(codec, TOMTOM_A_RX_EAR_EN) & 0x10) != 0) {
 			pr_debug("%s: EAR is enabled, do not enable compander\n",
 				 __func__);
 			break;
 		}
-
 		/* Set compander Sample rate */
 		snd_soc_update_bits(codec,
 				    TOMTOM_A_CDC_COMP0_FS_CFG + (comp * 8),
@@ -1209,10 +1256,6 @@ static int tomtom_config_compander(struct snd_soc_dapm_widget *w,
 
 		/* Set gain source to register */
 		tomtom_config_gain_compander(codec, comp, false);
-		if (comp == COMPANDER_1)
-			snd_soc_update_bits(codec,
-				TOMTOM_A_CDC_COMP0_B4_CTL + (comp * 8),
-				0x80, 0x00);
 		break;
 	}
 	return 0;
@@ -1370,6 +1413,13 @@ static int tomtom_mad_input_put(struct snd_kcontrol *kcontrol,
 
 	tomtom_mad_input = ucontrol->value.integer.value[0];
 	micb_4_int_reg = tomtom->resmgr.reg_addr->micb_4_int_rbias;
+
+	if (tomtom_mad_input >= ARRAY_SIZE(tomtom_conn_mad_text)) {
+		dev_err(codec->dev,
+			"%s: tomtom_mad_input = %d out of bounds\n",
+			__func__, tomtom_mad_input);
+		return -EINVAL;
+	}
 
 	pr_debug("%s: tomtom_mad_input = %s\n", __func__,
 			tomtom_conn_mad_text[tomtom_mad_input]);
@@ -2950,13 +3000,6 @@ static int tomtom_codec_internal_rco_ctrl(struct snd_soc_codec *codec,
 	struct tomtom_priv *tomtom = snd_soc_codec_get_drvdata(codec);
 	int ret = 0;
 
-	if (mutex_is_locked(&tomtom->resmgr.codec_bg_clk_lock)) {
-		dev_err(codec->dev, "%s: BG_CLK already acquired\n",
-			__func__);
-		ret = -EINVAL;
-		goto done;
-	}
-
 	if (!tomtom->codec_ext_clk_en_cb) {
 		dev_err(codec->dev,
 			"%s: Invalid ext_clk_callback\n",
@@ -3615,7 +3658,16 @@ static int tomtom_codec_enable_micbias(struct snd_soc_dapm_widget *w,
 			 *  If not internal, make sure to write the
 			 *  register to default value
 			 */
-			snd_soc_write(codec, micb_int_reg, 0x24);
+#ifdef VENDOR_EDIT
+/*suzhiguang@MultiMedia.AudioDrv, 2015-06-19, Modify for hardware requirement*/
+        {
+            if((strnstr(w->name, "MIC BIAS1", sizeof("MIC BIAS1")))
+                ||(strnstr(w->name, "MIC BIAS3", sizeof("MIC BIAS3"))))
+                snd_soc_write(codec, micb_int_reg, 0x00);
+            else
+			    snd_soc_write(codec, micb_int_reg, 0x24);
+        }
+#endif
 		if (tomtom->mbhc_started && micb_ctl_reg ==
 		    TOMTOM_A_MICB_2_CTL) {
 			if (++tomtom->micb_2_users == 1) {
@@ -3633,6 +3685,11 @@ static int tomtom_codec_enable_micbias(struct snd_soc_dapm_widget *w,
 			}
 			pr_debug("%s: micb_2_users %d\n", __func__,
 				 tomtom->micb_2_users);
+		} else if (micb_ctl_reg == TOMTOM_A_MICB_3_CTL) {
+			if (++tomtom->micb_3_users == 1)
+				snd_soc_update_bits(codec, micb_ctl_reg,
+						    1 << w->shift,
+						    1 << w->shift);
 		} else {
 			snd_soc_update_bits(codec, micb_ctl_reg, 1 << w->shift,
 					    1 << w->shift);
@@ -3662,6 +3719,15 @@ static int tomtom_codec_enable_micbias(struct snd_soc_dapm_widget *w,
 			WARN(tomtom->micb_2_users < 0,
 			     "Unexpected micbias users %d\n",
 			     tomtom->micb_2_users);
+		} else if (micb_ctl_reg == TOMTOM_A_MICB_3_CTL) {
+			if (--tomtom->micb_3_users == 0)
+				snd_soc_update_bits(codec, micb_ctl_reg,
+						    1 << w->shift, 0);
+			pr_debug("%s: micb_3_users %d\n", __func__,
+				 tomtom->micb_3_users);
+			WARN(tomtom->micb_3_users < 0,
+			     "Unexpected micbias-3 users %d\n",
+			     tomtom->micb_3_users);
 		} else {
 			snd_soc_update_bits(codec, micb_ctl_reg, 1 << w->shift,
 					    0);
@@ -3871,6 +3937,8 @@ static int tomtom_codec_enable_dec(struct snd_soc_dapm_widget *w,
 							CF_MIN_3DB_150HZ << 4);
 			}
 
+			/* enable HPF */
+			snd_soc_update_bits(codec, tx_mux_ctl_reg , 0x08, 0x00);
 		} else
 			/* bypass HPF */
 			snd_soc_update_bits(codec, tx_mux_ctl_reg , 0x08, 0x08);
@@ -3879,8 +3947,8 @@ static int tomtom_codec_enable_dec(struct snd_soc_dapm_widget *w,
 
 	case SND_SOC_DAPM_POST_PMU:
 
-		/* enable HPF */
-		snd_soc_update_bits(codec, tx_mux_ctl_reg , 0x08, 0x00);
+		/* Disable TX digital mute */
+		snd_soc_update_bits(codec, tx_vol_ctl_reg, 0x01, 0x00);
 
 		if ((tx_hpf_work[decimator - 1].tx_hpf_cut_of_freq !=
 				CF_MIN_3DB_150HZ) &&
@@ -4778,7 +4846,6 @@ static const struct snd_soc_dapm_route audio_map[] = {
 	{"HPHL", NULL, "HPHL_PA_MIXER"},
 	{"HPHL_PA_MIXER", NULL, "HPHL DAC"},
 	{"HPHL DAC", NULL, "RX_BIAS"},
-	{"HPHL DAC", NULL, "COMP1_CLK"},
 
 	{"HPHR", NULL, "HPHR_PA_MIXER"},
 	{"HPHR_PA_MIXER", NULL, "HPHR DAC"},
@@ -4794,6 +4861,8 @@ static const struct snd_soc_dapm_route audio_map[] = {
 	{"ANC1 MUX", "ADC2", "ADC2"},
 	{"ANC1 MUX", "ADC3", "ADC3"},
 	{"ANC1 MUX", "ADC4", "ADC4"},
+	{"ANC1 MUX", "ADC5", "ADC5"},
+	{"ANC1 MUX", "ADC6", "ADC6"},
 	{"ANC1 MUX", "DMIC1", "DMIC1"},
 	{"ANC1 MUX", "DMIC2", "DMIC2"},
 	{"ANC1 MUX", "DMIC3", "DMIC3"},
@@ -4804,6 +4873,8 @@ static const struct snd_soc_dapm_route audio_map[] = {
 	{"ANC2 MUX", "ADC2", "ADC2"},
 	{"ANC2 MUX", "ADC3", "ADC3"},
 	{"ANC2 MUX", "ADC4", "ADC4"},
+	{"ANC2 MUX", "ADC5", "ADC5"},
+	{"ANC2 MUX", "ADC6", "ADC6"},
 	{"ANC2 MUX", "DMIC1", "DMIC1"},
 	{"ANC2 MUX", "DMIC2", "DMIC2"},
 	{"ANC2 MUX", "DMIC3", "DMIC3"},
@@ -4876,6 +4947,7 @@ static const struct snd_soc_dapm_route audio_map[] = {
 
 	{"RX7 MIX1", NULL, "COMP0_CLK"},
 	{"RX8 MIX1", NULL, "COMP0_CLK"},
+	{"RX1 MIX1", NULL, "COMP1_CLK"},
 	{"RX2 MIX1", NULL, "COMP1_CLK"},
 	{"RX3 MIX1", NULL, "COMP2_CLK"},
 	{"RX5 MIX1", NULL, "COMP2_CLK"},
@@ -5391,9 +5463,6 @@ static int tomtom_volatile(struct snd_soc_codec *ssc, unsigned int reg)
 	if ((reg >= TOMTOM_A_CDC_MBHC_EN_CTL) || (reg < 0x100))
 		return 1;
 
-	if (reg == TOMTOM_A_CDC_CLK_RX_RESET_CTL)
-		return 1;
-
 	/* IIR Coeff registers are not cacheable */
 	if ((reg >= TOMTOM_A_CDC_IIR1_COEF_B1_CTL) &&
 		(reg <= TOMTOM_A_CDC_IIR2_COEF_B2_CTL))
@@ -5413,10 +5482,23 @@ static int tomtom_volatile(struct snd_soc_codec *ssc, unsigned int reg)
 	if (tomtom_is_digital_gain_register(reg))
 		return 1;
 
+	/* HPH status registers */
+	if (reg == TOMTOM_A_RX_HPH_L_STATUS || reg == TOMTOM_A_RX_HPH_R_STATUS)
+		return 1;
+
+	if (reg == TOMTOM_A_MBHC_INSERT_DET_STATUS)
+		return 1;
+
+	if (reg == TOMTOM_A_RX_HPH_CNP_EN)
+		return 1;
+
 	if (((reg >= TOMTOM_A_CDC_SPKR_CLIPDET_VAL0 &&
 	    reg <= TOMTOM_A_CDC_SPKR_CLIPDET_VAL7)) ||
 	    ((reg >= TOMTOM_A_CDC_SPKR2_CLIPDET_VAL0) &&
 	     (reg <= TOMTOM_A_CDC_SPKR2_CLIPDET_VAL7)))
+		return 1;
+
+	if (reg == TOMTOM_A_CDC_VBAT_GAIN_MON_VAL)
 		return 1;
 
 	for (i = 0; i < ARRAY_SIZE(audio_reg_cfg); i++)
@@ -5424,24 +5506,8 @@ static int tomtom_volatile(struct snd_soc_codec *ssc, unsigned int reg)
 		    TOMTOM_REGISTER_START_OFFSET == reg)
 			return 1;
 
-	switch (reg) {
-	case TOMTOM_A_RX_HPH_R_STATUS:
-	case TOMTOM_A_RX_HPH_L_STATUS:
-	case TOMTOM_A_MBHC_INSERT_DET_STATUS:
-	case TOMTOM_A_RX_HPH_CNP_EN:
-	case TOMTOM_A_CDC_VBAT_GAIN_MON_VAL:
-	case TOMTOM_A_SVASS_SPE_INBOX_TRG:
-	case TOMTOM_A_BIAS_OSC_BG_CTL:
-	case TOMTOM_A_CLK_BUFF_EN2:
+	if (reg == TOMTOM_A_SVASS_SPE_INBOX_TRG)
 		return 1;
-	}
-
-	if (reg == TOMTOM_A_QFUSE_STATUS)
-		return 1;
-
-	for (i = 0; i < ARRAY_SIZE(non_cacheable_reg); i++)
-		if (reg == non_cacheable_reg[i])
-			return 1;
 
 	return 0;
 }
@@ -5597,7 +5663,7 @@ static int tomtom_set_channel_map(struct snd_soc_dai *dai,
 	struct tomtom_priv *tomtom = snd_soc_codec_get_drvdata(dai->codec);
 	struct wcd9xxx *core = dev_get_drvdata(dai->codec->dev->parent);
 	if (!tx_slot || !rx_slot) {
-		pr_err("%s: Invalid tx_slot=%p, rx_slot=%p\n",
+		pr_err("%s: Invalid tx_slot=%pK, rx_slot=%pK\n",
 			__func__, tx_slot, rx_slot);
 		return -EINVAL;
 	}
@@ -5633,7 +5699,7 @@ static int tomtom_get_channel_map(struct snd_soc_dai *dai,
 	case AIF2_PB:
 	case AIF3_PB:
 		if (!rx_slot || !rx_num) {
-			pr_err("%s: Invalid rx_slot %p or rx_num %p\n",
+			pr_err("%s: Invalid rx_slot %pK or rx_num %pK\n",
 				 __func__, rx_slot, rx_num);
 			return -EINVAL;
 		}
@@ -5652,7 +5718,7 @@ static int tomtom_get_channel_map(struct snd_soc_dai *dai,
 	case AIF4_VIFEED:
 	case AIF4_MAD_TX:
 		if (!tx_slot || !tx_num) {
-			pr_err("%s: Invalid tx_slot %p or tx_num %p\n",
+			pr_err("%s: Invalid tx_slot %pK or tx_num %pK\n",
 				 __func__, tx_slot, tx_num);
 			return -EINVAL;
 		}
@@ -5865,6 +5931,7 @@ static void tomtom_set_rxsb_port_format(struct snd_pcm_hw_params *params,
 		tomtom_p->dai[dai->id].bit_width = 16;
 		break;
 	case SNDRV_PCM_FORMAT_S24_LE:
+	case SNDRV_PCM_FORMAT_S24_3LE:
 		bit_sel = 0x0;
 		tomtom_p->dai[dai->id].bit_width = 24;
 		break;
@@ -5924,6 +5991,7 @@ static void tomtom_set_tx_sb_port_format(struct snd_pcm_hw_params *params,
 		tomtom_p->dai[dai->id].bit_width = 16;
 		break;
 	case SNDRV_PCM_FORMAT_S24_LE:
+	case SNDRV_PCM_FORMAT_S24_3LE:
 		bit_sel = 0x0;
 		tomtom_p->dai[dai->id].bit_width = 24;
 		break;
@@ -6038,6 +6106,7 @@ static int tomtom_hw_params(struct snd_pcm_substream *substream,
 			tomtom->dai[dai->id].bit_width = 16;
 			break;
 		case SNDRV_PCM_FORMAT_S24_LE:
+		case SNDRV_PCM_FORMAT_S24_3LE:
 			tomtom->dai[dai->id].bit_width = 24;
 			i2s_bit_mode = 0x00;
 			break;
@@ -6107,84 +6176,6 @@ static int tomtom_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
-static int tomtom_digital_mute(struct snd_soc_dai *dai, int mute)
-{
-	struct snd_soc_codec *codec = NULL;
-	struct wcd9xxx_ch *ch = NULL;
-	struct tomtom_priv *tomtom;
-	u32 tx_port = 0;
-	u16 tx_vol_ctl_reg = 0, tx_port_reg = 0;
-	u8 tx_port_reg_val = 0;
-	s8 decimator = 0;
-
-	 if (!dai || !dai->codec) {
-		pr_err("%s: Invalid params\n", __func__);
-		return -EINVAL;
-	}
-
-	codec = dai->codec;
-	if (dai->id != AIF1_CAP &&
-	    dai->id != AIF2_CAP &&
-	    dai->id != AIF3_CAP) {
-		dev_dbg(codec->dev, "%s: Not capture use case skip\n",
-			__func__);
-		return 0;
-	}
-
-	tomtom = snd_soc_codec_get_drvdata(codec);
-	if (!tomtom) {
-		dev_err(codec->dev,
-			"%s: drvdata get failed\n", __func__);
-		return -EINVAL;
-	}
-
-	dev_dbg(codec->dev, "%s: enter, mute = %d\n", __func__, mute);
-
-	mute = (mute) ? 1 : 0;
-	/* sleep for 10ms before unmuting the TX path as per HW requirement */
-	usleep_range(10000, 10100);
-	list_for_each_entry(ch, &tomtom->dai[dai->id].wcd9xxx_ch_list, list) {
-		tx_port = ch->port + 1;
-		dev_dbg(codec->dev, "%s: dai->id = %d, tx_port = %d",
-			__func__, dai->id, tx_port);
-		if ((tx_port < 1) || (tx_port > NUM_DECIMATORS)) {
-			dev_err(codec->dev, "%s: Invalid SLIM TX%u DAI ID is %d\n",
-				__func__, tx_port, dai->id);
-			return -EINVAL;
-		}
-
-		tx_port_reg = TOMTOM_A_CDC_CONN_TX_SB_B1_CTL + (tx_port - 1);
-		tx_port_reg_val = snd_soc_read(codec, tx_port_reg);
-		decimator = 0;
-		if ((tx_port >= 1) && (tx_port <= 6)) {
-			tx_port_reg_val = tx_port_reg_val & 0x0F;
-			if (tx_port_reg_val == 0x8)
-				decimator = tx_port;
-		} else if ((tx_port >= 7) && (tx_port <= NUM_DECIMATORS)) {
-			tx_port_reg_val = tx_port_reg_val & 0x1F;
-			if ((tx_port_reg_val >= 0x8) &&
-			    (tx_port_reg_val <= 0x11)) {
-				decimator = (tx_port_reg_val - 0x8) + 1;
-			}
-		}
-
-		if (decimator && decimator <= NUM_DECIMATORS) {
-			dev_dbg(codec->dev, "%s: Decimator used %d\n",
-				__func__, decimator);
-			tx_vol_ctl_reg =
-				TOMTOM_A_CDC_TX1_VOL_CTL_CFG +
-				8 * (decimator - 1);
-			/* Set TX digital mute */
-			snd_soc_update_bits(codec, tx_vol_ctl_reg, 0x01, mute);
-		} else {
-			dev_err(codec->dev, "%s: Invalid Decimator used %d\n",
-				__func__, decimator);
-		}
-	}
-
-	return 0;
-}
-
 static struct snd_soc_dai_ops tomtom_dai_ops = {
 	.startup = tomtom_startup,
 	.shutdown = tomtom_shutdown,
@@ -6193,7 +6184,6 @@ static struct snd_soc_dai_ops tomtom_dai_ops = {
 	.set_fmt = tomtom_set_dai_fmt,
 	.set_channel_map = tomtom_set_channel_map,
 	.get_channel_map = tomtom_get_channel_map,
-	.digital_mute = tomtom_digital_mute,
 };
 
 static struct snd_soc_dai_driver tomtom_dai[] = {
@@ -6217,7 +6207,7 @@ static struct snd_soc_dai_driver tomtom_dai[] = {
 		.capture = {
 			.stream_name = "AIF1 Capture",
 			.rates = WCD9330_RATES,
-			.formats = TOMTOM_FORMATS,
+			.formats = TOMTOM_FORMATS_S16_S24_LE,
 			.rate_max = 192000,
 			.rate_min = 8000,
 			.channels_min = 1,
@@ -6245,7 +6235,7 @@ static struct snd_soc_dai_driver tomtom_dai[] = {
 		.capture = {
 			.stream_name = "AIF2 Capture",
 			.rates = WCD9330_RATES,
-			.formats = TOMTOM_FORMATS,
+			.formats = TOMTOM_FORMATS_S16_S24_LE,
 			.rate_max = 192000,
 			.rate_min = 8000,
 			.channels_min = 1,
@@ -6273,7 +6263,7 @@ static struct snd_soc_dai_driver tomtom_dai[] = {
 		.capture = {
 			.stream_name = "AIF3 Capture",
 			.rates = WCD9330_RATES,
-			.formats = TOMTOM_FORMATS,
+			.formats = TOMTOM_FORMATS_S16_S24_LE,
 			.rate_max = 48000,
 			.rate_min = 8000,
 			.channels_min = 1,
@@ -6318,7 +6308,7 @@ static struct snd_soc_dai_driver tomtom_i2s_dai[] = {
 		.playback = {
 			.stream_name = "AIF1 Playback",
 			.rates = WCD9330_RATES,
-			.formats = TOMTOM_FORMATS,
+			.formats = TOMTOM_FORMATS_S16_S24_LE,
 			.rate_max = 192000,
 			.rate_min = 8000,
 			.channels_min = 1,
@@ -6332,7 +6322,7 @@ static struct snd_soc_dai_driver tomtom_i2s_dai[] = {
 		.capture = {
 			.stream_name = "AIF1 Capture",
 			.rates = WCD9330_RATES,
-			.formats = TOMTOM_FORMATS,
+			.formats = TOMTOM_FORMATS_S16_S24_LE,
 			.rate_max = 192000,
 			.rate_min = 8000,
 			.channels_min = 1,
@@ -6346,7 +6336,7 @@ static struct snd_soc_dai_driver tomtom_i2s_dai[] = {
 		.playback = {
 			.stream_name = "AIF2 Playback",
 			.rates = WCD9330_RATES,
-			.formats = TOMTOM_FORMATS,
+			.formats = TOMTOM_FORMATS_S16_S24_LE,
 			.rate_max = 192000,
 			.rate_min = 8000,
 			.channels_min = 1,
@@ -6360,7 +6350,7 @@ static struct snd_soc_dai_driver tomtom_i2s_dai[] = {
 		.capture = {
 			.stream_name = "AIF2 Capture",
 			.rates = WCD9330_RATES,
-			.formats = TOMTOM_FORMATS,
+			.formats = TOMTOM_FORMATS_S16_S24_LE,
 			.rate_max = 192000,
 			.rate_min = 8000,
 			.channels_min = 1,
@@ -6479,6 +6469,9 @@ static int tomtom_codec_enable_slimrx(struct snd_soc_dapm_widget *w,
 						dai->grph);
 		if (!dai->bus_down_in_recovery)
 			ret = tomtom_codec_enable_slim_chmask(dai, false);
+		else
+			pr_debug("%s: bus in recovery skip enable slim_chmask",
+				__func__);
 		if (ret < 0) {
 			ret = wcd9xxx_disconnect_port(core,
 						      &dai->wcd9xxx_ch_list,
@@ -6486,8 +6479,6 @@ static int tomtom_codec_enable_slimrx(struct snd_soc_dapm_widget *w,
 			pr_debug("%s: Disconnect RX port, ret = %d\n",
 				 __func__, ret);
 		}
-
-		dai->bus_down_in_recovery = false;
 		break;
 	}
 	return ret;
@@ -6586,7 +6577,6 @@ static int tomtom_codec_enable_slimvi_feedback(struct snd_soc_dapm_widget *w,
 			snd_soc_update_bits(codec,
 				TOMTOM_A_SPKR2_PROT_EN, 0x88, 0x00);
 		}
-		dai->bus_down_in_recovery = false;
 		break;
 	}
 out_vi:
@@ -6631,8 +6621,6 @@ static int __tomtom_codec_enable_slimtx(struct snd_soc_codec *codec,
 				"%s: Disconnect TX port, ret = %d\n",
 				 __func__, ret);
 		}
-
-		dai_data->bus_down_in_recovery = false;
 		break;
 	}
 
@@ -7762,7 +7750,7 @@ static const struct wcd9xxx_reg_mask_val tomtom_reg_defaults[] = {
 	TOMTOM_REG_VAL(TOMTOM_A_CDC_MAD_INP_SEL, 0x01),
 
 	/* Set HPH Path to low power mode */
-	TOMTOM_REG_VAL(TOMTOM_A_RX_HPH_BIAS_PA, 0x55),
+	TOMTOM_REG_VAL(TOMTOM_A_RX_HPH_BIAS_PA, 0x57),
 
 	/* BUCK default */
 	TOMTOM_REG_VAL(TOMTOM_A_BUCK_CTRL_CCL_4, 0x51),
@@ -8074,10 +8062,8 @@ int tomtom_hs_detect(struct snd_soc_codec *codec,
 		snd_soc_update_bits(codec, TOMTOM_A_MICB_CFILT_2_CTL, 0x01,
 				    0x00);
 		tomtom->mbhc.mbhc_cfg = NULL;
-		tomtom->mbhc_started = false;
 		rc = 0;
 	}
-	wcd9xxx_clsh_post_init(&tomtom->clsh_d, tomtom->mbhc_started);
 	return rc;
 }
 EXPORT_SYMBOL(tomtom_hs_detect);
@@ -8134,6 +8120,7 @@ static void tomtom_init_slim_slave_cfg(struct snd_soc_codec *codec)
 
 static int tomtom_device_down(struct wcd9xxx *wcd9xxx)
 {
+	int count;
 	struct snd_soc_codec *codec;
 	struct tomtom_priv *priv;
 
@@ -8143,6 +8130,8 @@ static int tomtom_device_down(struct wcd9xxx *wcd9xxx)
 	snd_soc_card_change_online_state(codec->card, 0);
 	set_bit(BUS_DOWN, &priv->status_mask);
 
+	for (count = 0; count < NUM_CODEC_DAIS; count++)
+		priv->dai[count].bus_down_in_recovery = true;
 	return 0;
 }
 
@@ -8466,7 +8455,7 @@ static void tomtom_compute_impedance(struct wcd9xxx_mbhc *mbhc, s16 *l, s16 *r,
 	struct tomtom_priv *tomtom;
 
 	if (!mbhc) {
-		pr_err("%s: Invalid parameters mbhc = %p\n",
+		pr_err("%s: Invalid parameters mbhc = %pK\n",
 			__func__,  mbhc);
 		return;
 	}
@@ -8525,7 +8514,7 @@ static void tomtom_zdet_error_approx(struct wcd9xxx_mbhc *mbhc, uint32_t *zl,
 	const int shift = TOMTOM_ZDET_ERROR_APPROX_SHIFT;
 
 	if (!zl || !zr || !mbhc) {
-		pr_err("%s: Invalid parameters zl = %p zr = %p, mbhc = %p\n",
+		pr_err("%s: Invalid parameters zl = %pK zr = %pK, mbhc = %pK\n",
 			__func__, zl, zr, mbhc);
 		return;
 	}
@@ -8679,16 +8668,10 @@ static int tomtom_post_reset_cb(struct wcd9xxx *wcd9xxx)
 	struct snd_soc_codec *codec;
 	struct tomtom_priv *tomtom;
 	int rco_clk_rate;
-	int count;
 
 	codec = (struct snd_soc_codec *)(wcd9xxx->ssr_priv);
 	tomtom = snd_soc_codec_get_drvdata(codec);
 
-	/*
-	 * Delay is needed for settling time
-	 * for the register configuration
-	 */
-	msleep(50);
 	snd_soc_card_change_online_state(codec->card, 1);
 	clear_bit(BUS_DOWN, &tomtom->status_mask);
 
@@ -8738,9 +8721,6 @@ static int tomtom_post_reset_cb(struct wcd9xxx *wcd9xxx)
 	ret = tomtom_setup_irqs(tomtom);
 	if (ret)
 		pr_err("%s: Failed to setup irq: %d\n", __func__, ret);
-
-	for (count = 0; count < NUM_CODEC_DAIS; count++)
-		tomtom->dai[count].bus_down_in_recovery = true;
 
 	/*
 	 * After SSR, the qfuse sensing is lost.
@@ -8845,39 +8825,18 @@ static struct wcd_cpe_core *tomtom_codec_get_cpe_core(
 static int tomtom_codec_fll_enable(struct snd_soc_codec *codec,
 				   bool enable)
 {
-	struct wcd9xxx *wcd9xxx;
-
-	if (!codec || !codec->control_data) {
-		pr_err("%s: Invalid codec handle, %p\n",
-		       __func__, codec);
-		return -EINVAL;
-	}
-
-	wcd9xxx = codec->control_data;
-
-	dev_dbg(codec->dev, "%s: %s, mclk_rate = %d\n",
-		__func__, (enable ? "enable" : "disable"),
-		wcd9xxx->mclk_rate);
-
-	switch (wcd9xxx->mclk_rate) {
-	case TOMTOM_MCLK_CLK_9P6MHZ:
-		snd_soc_update_bits(codec, TOMTOM_A_FLL_NREF,
-				    0x1F, 0x15);
-		snd_soc_update_bits(codec, TOMTOM_A_FLL_KDCO_TUNE,
-				    0x07, 0x06);
-		snd_soc_write(codec, TOMTOM_A_FLL_LOCK_THRESH, 0xD1);
-		snd_soc_write(codec, TOMTOM_A_FLL_LOCK_DET_COUNT,
-			      0x40);
-		break;
-	case TOMTOM_MCLK_CLK_12P288MHZ:
-		snd_soc_update_bits(codec, TOMTOM_A_FLL_NREF,
-				    0x1F, 0x11);
+	if (enable) {
 		snd_soc_update_bits(codec, TOMTOM_A_FLL_KDCO_TUNE,
 				    0x07, 0x05);
-		snd_soc_write(codec, TOMTOM_A_FLL_LOCK_THRESH, 0xB1);
+		snd_soc_write(codec, TOMTOM_A_FLL_LOCK_THRESH,
+			      0xC2);
 		snd_soc_write(codec, TOMTOM_A_FLL_LOCK_DET_COUNT,
 			      0x40);
-		break;
+		snd_soc_update_bits(codec, TOMTOM_A_FLL_TEST_ENABLE,
+				    0x06, 0x06);
+	} else {
+		snd_soc_update_bits(codec, TOMTOM_A_FLL_KDCO_TUNE,
+				    0x80, 0x00);
 	}
 
 	return 0;
@@ -9036,6 +8995,19 @@ static int tomtom_codec_probe(struct snd_soc_codec *codec)
 		pr_err("%s: mbhc init failed %d\n", __func__, ret);
 		goto err_hwdep;
 	}
+	
+#ifdef VENDOR_EDIT
+/*wangdongdong@MultiMedia.AudioDrv, 2015-03-24, Modify for headset uevent*/
+		
+	
+		tomtom->mbhc.wcd9xxx_sdev.name= "h2w";
+		tomtom->mbhc.wcd9xxx_sdev.print_name = wcd9xxx_print_name;
+		ret = switch_dev_register(&tomtom->mbhc.wcd9xxx_sdev);
+		if (ret)
+		{
+			goto err_switch_dev_register;
+		}
+#endif
 
 	tomtom->codec = codec;
 	for (i = 0; i < COMPANDER_MAX; i++) {
@@ -9048,13 +9020,12 @@ static int tomtom_codec_probe(struct snd_soc_codec *codec)
 	tomtom->aux_r_gain = 0x1F;
 	tomtom->ldo_h_users = 0;
 	tomtom->micb_2_users = 0;
+	tomtom->micb_3_users = 0;
 	tomtom_update_reg_defaults(codec);
 	pr_debug("%s: MCLK Rate = %x\n", __func__, wcd9xxx->mclk_rate);
-	if (wcd9xxx->mclk_rate == TOMTOM_MCLK_CLK_12P288MHZ) {
+	if (wcd9xxx->mclk_rate == TOMTOM_MCLK_CLK_12P288MHZ)
 		snd_soc_update_bits(codec, TOMTOM_A_CHIP_CTL, 0x06, 0x0);
-		snd_soc_update_bits(codec, TOMTOM_A_RX_COM_TIMER_DIV,
-				    0x01, 0x01);
-	} else if (wcd9xxx->mclk_rate == TOMTOM_MCLK_CLK_9P6MHZ)
+	else if (wcd9xxx->mclk_rate == TOMTOM_MCLK_CLK_9P6MHZ)
 		snd_soc_update_bits(codec, TOMTOM_A_CHIP_CTL, 0x06, 0x2);
 	tomtom_codec_init_reg(codec);
 
@@ -9144,6 +9115,10 @@ static int tomtom_codec_probe(struct snd_soc_codec *codec)
 		/* Do not fail probe if CPE failed */
 		ret = 0;
 	}
+        #ifdef VENDOR_EDIT
+		/*wangdongdong@MultiMedia.AudioDrv, 2015-03-24, Modify for headset uevent*/
+           priv_headset_type = tomtom;
+        #endif
 	return ret;
 
 err_pdata:
@@ -9151,6 +9126,12 @@ err_pdata:
 err_hwdep:
 	kfree(tomtom->fw_data);
 err_nomem_slimch:
+
+#ifdef VENDOR_EDIT
+/*wangdongdong@MultiMedia.AudioDrv, 2015-03-24, Modify for headset uevent*/
+	switch_dev_unregister(&tomtom->mbhc.wcd9xxx_sdev);
+	err_switch_dev_register:
+#endif
 	devm_kfree(codec->dev, tomtom);
 	return ret;
 }

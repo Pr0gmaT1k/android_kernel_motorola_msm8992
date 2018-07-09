@@ -50,10 +50,6 @@
 #define MSMFB_BUFFER_SYNC32  _IOW(MSMFB_IOCTL_MAGIC, 162, struct mdp_buf_sync32)
 #define MSMFB_OVERLAY_PREPARE32		_IOWR(MSMFB_IOCTL_MAGIC, 169, \
 						struct mdp_overlay_list32)
-#define MSMFB_REG_READ32   _IOWR(MSMFB_IOCTL_MAGIC, 64, \
-						struct msmfb_reg_access32)
-#define MSMFB_REG_WRITE32  _IOW(MSMFB_IOCTL_MAGIC, 65, \
-						struct msmfb_reg_access32)
 
 static unsigned int __do_compat_ioctl_nr(unsigned int cmd32)
 {
@@ -98,12 +94,6 @@ static unsigned int __do_compat_ioctl_nr(unsigned int cmd32)
 		break;
 	case MSMFB_OVERLAY_PREPARE32:
 		cmd = MSMFB_OVERLAY_PREPARE;
-		break;
-	case MSMFB_REG_READ32:
-		cmd = MSMFB_REG_READ;
-		break;
-	case MSMFB_REG_WRITE32:
-		cmd = MSMFB_REG_WRITE;
 		break;
 	default:
 		cmd = cmd32;
@@ -257,53 +247,6 @@ static int mdss_fb_compat_cursor(struct fb_info *info, unsigned int cmd,
 	ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) cursor);
 	return ret;
 }
-
-static int mdss_fb_compat_reg_access(struct fb_info *info, unsigned int cmd,
-				unsigned long arg)
-{
-	struct msmfb_reg_access32 __user *reg_access32;
-	struct msmfb_reg_access __user *reg_access;
-	u32 data;
-	int ret;
-
-	reg_access = compat_alloc_user_space(sizeof(*reg_access));
-	if (!reg_access) {
-		pr_err("%s:%u: compat alloc error [%zu] bytes\n",
-				__func__, __LINE__, sizeof(*reg_access));
-		return -EINVAL;
-	}
-
-	reg_access32 = compat_ptr(arg);
-	if (copy_in_user(&reg_access->use_hs_mode, &reg_access32->use_hs_mode,
-							sizeof(uint8_t)))
-		return -EFAULT;
-
-	if (copy_in_user(&reg_access->address, &reg_access32->address,
-							sizeof(uint8_t)))
-		return -EFAULT;
-
-	if (copy_in_user(&reg_access->buffer_size, &reg_access32->buffer_size,
-							sizeof(uint32_t)))
-		return -EFAULT;
-
-
-	if (get_user(data, &reg_access32->buffer) ||
-		put_user(compat_ptr(data), &reg_access->buffer))
-		return -EFAULT;
-
-	ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) reg_access);
-	if (ret) {
-		pr_err("%s: failed %d\n", __func__, ret);
-		return ret;
-	}
-
-	if (copy_in_user(compat_ptr(reg_access32->buffer),
-				reg_access->buffer, reg_access32->buffer_size))
-		return -EFAULT;
-
-	return ret;
-}
-
 
 static int mdss_fb_compat_set_lut(struct fb_info *info, unsigned long arg)
 {
@@ -1907,6 +1850,17 @@ static int __from_user_calib_dcm_state(
 	return 0;
 }
 
+static int __from_user_pp_init_data(
+			struct mdp_pp_init_data32 __user *init_data32,
+			struct mdp_pp_init_data __user *init_data)
+{
+	if (copy_in_user(&init_data->init_request, &init_data32->init_request,
+			sizeof(uint32_t)))
+		return -EFAULT;
+
+	return 0;
+}
+
 static int __pp_compat_alloc(struct msmfb_mdp_pp32 __user *pp32,
 					struct msmfb_mdp_pp __user **pp,
 					uint32_t op)
@@ -2179,6 +2133,14 @@ static int mdss_compat_pp_ioctl(struct fb_info *info, unsigned int cmd,
 		ret = __from_user_calib_dcm_state(
 			compat_ptr((uintptr_t)&pp32->data.calib_dcm),
 			&pp->data.calib_dcm);
+		if (ret)
+			goto pp_compat_exit;
+		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp);
+		break;
+	case mdp_op_pp_init_cfg:
+		ret = __from_user_pp_init_data(
+			compat_ptr((uintptr_t)&pp32->data.init_data),
+			&pp->data.init_data);
 		if (ret)
 			goto pp_compat_exit;
 		ret = mdss_fb_do_ioctl(info, cmd, (unsigned long) pp);
@@ -2830,10 +2792,6 @@ int mdss_fb_compat_ioctl(struct fb_info *info, unsigned int cmd,
 	case MSMFB_METADATA_GET:
 	case MSMFB_OVERLAY_PREPARE:
 		ret = mdss_compat_overlay_ioctl(info, cmd, arg);
-		break;
-	case MSMFB_REG_WRITE:
-	case MSMFB_REG_READ:
-		ret = mdss_fb_compat_reg_access(info, cmd, arg);
 		break;
 	case MSMFB_NOTIFY_UPDATE:
 	case MSMFB_DISPLAY_COMMIT:

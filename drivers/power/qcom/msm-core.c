@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2015,2017, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -191,6 +191,38 @@ static void core_temp_notify(enum thermal_trip_type type,
 	complete(&sampling_completion);
 }
 
+#ifdef VENDOR_EDIT
+/* ic, provide pcost based on requested frequency and temperature */
+unsigned int power_cost_at_freq_at_temp(
+	unsigned int cpu,
+	unsigned int freq,
+	long temp)
+{
+	struct cpu_activity_info *cpu_node = &activity[cpu];
+	int temp_point, i;
+
+	if (!cpu_node->sp->table || !cpu_node->sp->num_of_freqs)
+		return 0;
+
+	/* come out temp point at intervals */
+	if (temp < TEMP_BASE_POINT)
+		temp_point = 0;
+	else if (temp > TEMP_MAX_POINT)
+		temp_point = TEMP_DATA_POINTS - 1;
+	else
+		temp_point = (temp - TEMP_BASE_POINT) / 5;
+
+	/* locate temp. then come out cost at that temp. and freq. */
+	for (i = 0; i < cpu_node->sp->num_of_freqs; i++) {
+		if (cpu_node->sp->table[i].frequency >= freq)
+			return cpu_node->sp->power[temp_point][i];
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(power_cost_at_freq_at_temp);
+#endif
+
 static void repopulate_stats(int cpu)
 {
 	int i;
@@ -358,10 +390,14 @@ static int update_userspace_power(struct sched_params __user *argp)
 	int cpu;
 	struct cpu_activity_info *node;
 	struct cpu_static_info *sp, *clear_sp;
-	int mpidr = (argp->cluster << 8);
-	int cpumask = argp->cpumask;
+	int cpumask, cluster, mpidr;
 
-	pr_debug("cpumask %d, cluster: %d\n", argp->cpumask, argp->cluster);
+	get_user(cpumask, &argp->cpumask);
+	get_user(cluster, &argp->cluster);
+	mpidr = cluster << 8;
+
+	pr_debug("%s: cpumask %d, cluster: %d\n", __func__, cpumask,
+					cluster);
 	for (i = 0; i < MAX_CORES_PER_CLUSTER; i++, cpumask >>= 1) {
 		if (!(cpumask & 0x01))
 			continue;
@@ -384,9 +420,10 @@ static int update_userspace_power(struct sched_params __user *argp)
 	if (!sp)
 		return -ENOMEM;
 
-
+	mutex_lock(&policy_update_mutex);
 	sp->power = allocate_2d_array_uint32_t(node->sp->num_of_freqs);
 	if (IS_ERR_OR_NULL(sp->power)) {
+		mutex_unlock(&policy_update_mutex);
 		ret = PTR_ERR(sp->power);
 		kfree(sp);
 		return ret;
@@ -406,11 +443,11 @@ static int update_userspace_power(struct sched_params __user *argp)
 	 * argp->cpumask within the cluster (argp->cluster)
 	 */
 	spin_lock(&update_lock);
-	cpumask = argp->cpumask;
+	get_user(cpumask, &argp->cpumask);
 	for (i = 0; i < MAX_CORES_PER_CLUSTER; i++, cpumask >>= 1) {
 		if (!(cpumask & 0x01))
 			continue;
-		mpidr = (argp->cluster << CLUSTER_OFFSET_FOR_MPIDR);
+		mpidr = (cluster << CLUSTER_OFFSET_FOR_MPIDR);
 		mpidr |= i;
 		for_each_possible_cpu(cpu) {
 			if (!(cpu_logical_map(cpu) == mpidr))
@@ -432,11 +469,13 @@ static int update_userspace_power(struct sched_params __user *argp)
 		}
 	}
 	spin_unlock(&update_lock);
+	mutex_unlock(&policy_update_mutex);
 
 	activate_power_table = true;
 	return 0;
 
 failed:
+	mutex_unlock(&policy_update_mutex);
 	for (i = 0; i < TEMP_DATA_POINTS; i++)
 		kfree(sp->power[i]);
 	kfree(sp->power);
@@ -452,8 +491,7 @@ static long msm_core_ioctl(struct file *file, unsigned int cmd,
 	struct sched_params __user *argp = (struct sched_params __user *)arg;
 	int i, cpu = num_possible_cpus();
 	int mpidr;
-	int cluster;
-	int cpumask;
+	int cluster, cpumask;
 
 	if (!argp)
 		return -EINVAL;
@@ -489,7 +527,7 @@ static long msm_core_ioctl(struct file *file, unsigned int cmd,
 				node->sp->voltage,
 				sizeof(uint32_t) * node->sp->num_of_freqs);
 		if (ret)
-			break;
+			goto unlock;
 		for (i = 0; i < node->sp->num_of_freqs; i++) {
 			ret = copy_to_user((void __user *)&argp->freq[i],
 					&node->sp->table[i].frequency,

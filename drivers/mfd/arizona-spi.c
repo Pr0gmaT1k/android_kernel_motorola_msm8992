@@ -22,43 +22,22 @@
 
 #include "arizona.h"
 
-static struct regulator *codec_supply_reg;
-
 static int arizona_spi_probe(struct spi_device *spi)
 {
 	const struct spi_device_id *id = spi_get_device_id(spi);
 	struct arizona *arizona;
 	const struct regmap_config *regmap_config;
-	unsigned long type;
 	int ret;
 
-	codec_supply_reg = devm_regulator_get(&spi->dev, "vreg-arizona1p2");
-	if (PTR_ERR(codec_supply_reg) == -EPROBE_DEFER) {
-		return -EPROBE_DEFER;
-	} else if (IS_ERR(codec_supply_reg)) {
-		pr_warn("%s: Cannot get regulator %s.\n",
-			__func__, "vreg-wlf1p2");
-	} else if (regulator_enable(codec_supply_reg)) {
-		pr_err("%s: failed to enable codec supply regulator.\n", __func__);
-	} else {
-		pr_info("%s: enabled codec supply regulator.\n", __func__);
-	}
-
-	if (spi->dev.of_node)
-		type = arizona_of_get_type(&spi->dev);
-	else
-		type = id->driver_data;
-
-	switch (type) {
+	switch (id->driver_data) {
 #ifdef CONFIG_MFD_WM5102
 	case WM5102:
 		regmap_config = &wm5102_spi_regmap;
 		break;
 #endif
-#ifdef CONFIG_MFD_FLORIDA
-	case WM8280:
+#ifdef CONFIG_MFD_WM5110
 	case WM5110:
-		regmap_config = &florida_spi_regmap;
+		regmap_config = &wm5110_spi_regmap;
 		break;
 #endif
 	default:
@@ -95,8 +74,6 @@ static int arizona_spi_remove(struct spi_device *spi)
 
 static const struct spi_device_id arizona_spi_ids[] = {
 	{ "wm5102", WM5102 },
-	{ "wm8280", WM8280 },
-	{ "wm8281", WM8280 },
 	{ "wm5110", WM5110 },
 	{ },
 };
@@ -107,7 +84,6 @@ static struct spi_driver arizona_spi_driver = {
 		.name	= "arizona",
 		.owner	= THIS_MODULE,
 		.pm	= &arizona_pm_ops,
-		.of_match_table	= of_match_ptr(arizona_of_match),
 	},
 	.probe		= arizona_spi_probe,
 	.remove		= arizona_spi_remove,

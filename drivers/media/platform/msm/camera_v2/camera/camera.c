@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -69,16 +69,7 @@ static int camera_check_event_status(struct v4l2_event *event)
 				__func__);
 		pr_err("%s : Line %d event_data->status 0X%x\n",
 				__func__, __LINE__, event_data->status);
-
-		switch (event_data->status) {
-		case MSM_CAMERA_ERR_CMD_FAIL:
-		case MSM_CAMERA_ERR_MAPPING:
-			return -EFAULT;
-		case MSM_CAMERA_ERR_DEVICE_BUSY:
-			return -EBUSY;
-		default:
-			return -EFAULT;
-		}
+		return -EFAULT;
 	}
 
 	return 0;
@@ -568,9 +559,6 @@ static int camera_v4l2_open(struct file *filep)
 	if (!atomic_read(&pvdev->opened)) {
 		pm_stay_awake(&pvdev->vdev->dev);
 
-		/* Disable power collapse latency */
-		msm_pm_qos_update_request(CAMERA_DISABLE_PC_LATENCY);
-
 		/* create a new session when first opened */
 		rc = msm_create_session(pvdev->vdev->num, pvdev->vdev);
 		if (rc < 0) {
@@ -604,8 +592,6 @@ static int camera_v4l2_open(struct file *filep)
 					__func__, __LINE__, rc);
 			goto post_fail;
 		}
-		/* Enable power collapse latency */
-		msm_pm_qos_update_request(CAMERA_ENABLE_PC_LATENCY);
 	} else {
 		rc = msm_create_command_ack_q(pvdev->vdev->num,
 			find_first_zero_bit((const unsigned long *)&opn_idx,
@@ -619,23 +605,9 @@ static int camera_v4l2_open(struct file *filep)
 	idx |= (1 << find_first_zero_bit((const unsigned long *)&opn_idx,
 				MSM_CAMERA_STREAM_CNT_BITS));
 	atomic_cmpxchg(&pvdev->opened, opn_idx, idx);
-
 	return rc;
 
 post_fail:
-        if (atomic_read(&pvdev->opened) == 0) {
-
-                camera_pack_event(filep, MSM_CAMERA_SET_PARM,
-                        MSM_CAMERA_PRIV_DEL_STREAM, -1, &event);
-
-                /* Donot wait, imaging server may have crashed */
-		msm_post_event(&event, -1);
-
-                camera_pack_event(filep, MSM_CAMERA_DEL_SESSION, 0, -1, &event);
-
-                /* Donot wait, imaging server may have crashed */
-                msm_post_event(&event, -1);
-        }
 	msm_delete_command_ack_q(pvdev->vdev->num, 0);
 command_ack_q_fail:
 	msm_destroy_session(pvdev->vdev->num);
@@ -695,7 +667,6 @@ static int camera_v4l2_close(struct file *filep)
 		/* This should take care of both normal close
 		 * and application crashes */
 		msm_destroy_session(pvdev->vdev->num);
-
 		pm_relax(&pvdev->vdev->dev);
 	} else {
 		camera_pack_event(filep, MSM_CAMERA_SET_PARM,

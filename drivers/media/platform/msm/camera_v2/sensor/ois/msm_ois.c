@@ -1,4 +1,4 @@
-/* Copyright (c) 2014 - 2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2015, 2017 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -54,6 +54,21 @@ static int32_t msm_ois_write_settings(struct msm_ois_ctrl_t *o_ctrl,
 					settings[i].reg_data,
 					settings[i].data_type);
 				break;
+          #ifdef VENDOR_EDIT
+          //added by zhangxiaowei@camera 20150310 for qcom OIS architecture
+			case MSM_CAMERA_I2C_NO_DATA:
+				o_ctrl->i2c_client.addr_type = MSM_CAMERA_I2C_BYTE_ADDR;
+				settings[i].reg_data = (settings[i].reg_addr & 0xFF);
+				settings[i].reg_addr = (settings[i].reg_addr >> 8);
+				settings[i].data_type = MSM_CAMERA_I2C_BYTE_DATA;
+				rc = o_ctrl->i2c_client.i2c_func_tbl->i2c_write(
+					&o_ctrl->i2c_client,
+					settings[i].reg_addr,
+					settings[i].reg_data,
+					settings[i].data_type);
+				o_ctrl->i2c_client.addr_type = MSM_CAMERA_I2C_WORD_ADDR;
+				break;
+           #endif /*VENDOR_EDIT*/
 			case MSM_CAMERA_I2C_DWORD_DATA:
 				reg_setting.reg_addr = settings[i].reg_addr;
 				reg_setting.reg_data[0] = (uint8_t)
@@ -76,6 +91,18 @@ static int32_t msm_ois_write_settings(struct msm_ois_ctrl_t *o_ctrl,
 				if (rc < 0)
 					return rc;
 				break;
+#ifdef VENDOR_EDIT // ois burst write
+			case MSM_CAMERA_I2C_SEQ_DATA:
+				o_ctrl->i2c_client.addr_type = settings[i].addr_type;
+				rc = o_ctrl->i2c_client.i2c_func_tbl->
+				i2c_write_seq(&o_ctrl->i2c_client,
+					settings[i].reg_addr,
+					settings[i].reg_data_seq,
+					settings[i].reg_data_seq_size);
+				if (rc < 0)
+					return rc;
+				break;
+#endif
 
 			default:
 				pr_err("Unsupport data type: %d\n",
@@ -206,6 +233,7 @@ static int32_t msm_ois_control(struct msm_ois_ctrl_t *o_ctrl,
 		cci_client->retries = 3;
 		cci_client->id_map = 0;
 		cci_client->cci_i2c_master = o_ctrl->cci_master;
+		cci_client->i2c_freq_mode = set_info->ois_params.i2c_freq_mode;
 	} else {
 		o_ctrl->i2c_client.client->addr =
 			set_info->ois_params.i2c_addr;
@@ -290,6 +318,8 @@ static int32_t msm_ois_config(struct msm_ois_ctrl_t *o_ctrl,
 				sizeof(struct msm_camera_i2c_seq_reg_setting));
 		} else
 #endif
+#ifndef VENDOR_EDIT
+/*oem hufeng 20150303 modify*/
 		if (copy_from_user(&conf_array,
 			(void *)cdata->cfg.settings,
 			sizeof(struct msm_camera_i2c_seq_reg_setting))) {
@@ -297,8 +327,18 @@ static int32_t msm_ois_config(struct msm_ois_ctrl_t *o_ctrl,
 			rc = -EFAULT;
 			break;
 		}
-
-		if (!conf_array.size) {
+#else
+		rc =copy_from_user(&conf_array,
+			(void *)cdata->cfg.settings,
+			sizeof(struct msm_camera_i2c_seq_reg_setting));
+		if (rc) {
+			pr_err("%s:%d failed\n", __func__, __LINE__);
+			rc = -EFAULT;
+			break;
+		}
+ #endif /*VENDOR_EDIT*/
+		if (!conf_array.size ||
+			conf_array.size > I2C_SEQ_REG_DATA_MAX) {
 			pr_err("%s:%d failed\n", __func__, __LINE__);
 			rc = -EFAULT;
 			break;
@@ -414,7 +454,7 @@ static long msm_ois_subdev_ioctl(struct v4l2_subdev *sd,
 	struct msm_ois_ctrl_t *o_ctrl = v4l2_get_subdevdata(sd);
 	void __user *argp = (void __user *)arg;
 	CDBG("Enter\n");
-	CDBG("%s:%d o_ctrl %p argp %p\n", __func__, __LINE__, o_ctrl, argp);
+	CDBG("%s:%d o_ctrl %pK argp %pK\n", __func__, __LINE__, o_ctrl, argp);
 	switch (cmd) {
 	case VIDIOC_MSM_SENSOR_GET_SUBDEV_ID:
 		return msm_ois_get_subdev_id(o_ctrl, argp);
@@ -425,11 +465,13 @@ static long msm_ois_subdev_ioctl(struct v4l2_subdev *sd,
 			pr_err("o_ctrl->i2c_client.i2c_func_tbl NULL\n");
 			return -EINVAL;
 		} else {
+			mutex_lock(o_ctrl->ois_mutex);
 			rc = msm_ois_power_down(o_ctrl);
 			if (rc < 0) {
 				pr_err("%s:%d OIS Power down failed\n",
 					__func__, __LINE__);
 			}
+			mutex_unlock(o_ctrl->ois_mutex);
 			return msm_ois_close(sd, NULL);
 		}
 	default:
@@ -491,7 +533,7 @@ static int32_t msm_ois_i2c_probe(struct i2c_client *client,
 		goto probe_failure;
 	}
 
-	CDBG("client = 0x%p\n",  client);
+	CDBG("client = 0x%pK\n",  client);
 
 	rc = of_property_read_u32(client->dev.of_node, "cell-index",
 		&ois_ctrl_t->subdev_id);
@@ -560,6 +602,8 @@ static long msm_ois_subdev_do_ioctl(
 				u32->cfg.set_info.ois_params.setting_size;
 			ois_data.cfg.set_info.ois_params.i2c_addr =
 				u32->cfg.set_info.ois_params.i2c_addr;
+			ois_data.cfg.set_info.ois_params.i2c_freq_mode =
+				u32->cfg.set_info.ois_params.i2c_freq_mode;
 			ois_data.cfg.set_info.ois_params.i2c_addr_type =
 				u32->cfg.set_info.ois_params.i2c_addr_type;
 			ois_data.cfg.set_info.ois_params.i2c_data_type =
@@ -592,6 +636,10 @@ static long msm_ois_subdev_do_ioctl(
 			parg = &ois_data;
 			break;
 		}
+		break;
+	case VIDIOC_MSM_OIS_CFG:
+		pr_err("%s: invalid cmd 0x%x received\n", __func__, cmd);
+		return -EINVAL;
 	}
 	rc = msm_ois_subdev_ioctl(sd, cmd, parg);
 

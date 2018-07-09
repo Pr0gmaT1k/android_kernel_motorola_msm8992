@@ -227,7 +227,7 @@ static int __scm_call(const struct scm_command *cmd)
 }
 
 #ifndef CONFIG_ARM64
-void scm_inv_range(unsigned long start, unsigned long end)
+static void scm_inv_range(unsigned long start, unsigned long end)
 {
 	u32 cacheline_size, ctr;
 
@@ -245,14 +245,12 @@ void scm_inv_range(unsigned long start, unsigned long end)
 	dsb();
 	isb();
 }
-EXPORT_SYMBOL(scm_inv_range);
 #else
 
-void scm_inv_range(unsigned long start, unsigned long end)
+static void scm_inv_range(unsigned long start, unsigned long end)
 {
 	dmac_inv_range((void *)start, (void *)end);
 }
-EXPORT_SYMBOL(scm_inv_range);
 #endif
 
 /**

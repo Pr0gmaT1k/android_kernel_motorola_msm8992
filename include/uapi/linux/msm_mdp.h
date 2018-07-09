@@ -68,8 +68,6 @@
 #define MSMFB_OVERLAY_PREPARE		_IOWR(MSMFB_IOCTL_MAGIC, 169, \
 						struct mdp_overlay_list)
 #define MSMFB_LPM_ENABLE	_IOWR(MSMFB_IOCTL_MAGIC, 170, unsigned int)
-#define MSMFB_REG_READ   _IOWR(MSMFB_IOCTL_MAGIC, 64, struct msmfb_reg_access)
-#define MSMFB_REG_WRITE  _IOW(MSMFB_IOCTL_MAGIC, 65, struct msmfb_reg_access)
 
 #define FB_TYPE_3D_PANEL 0x10101010
 #define MDP_IMGTYPE2_START 0x10000
@@ -884,6 +882,15 @@ struct mdp_calib_dcm_state {
 	uint32_t dcm_state;
 };
 
+struct mdp_pp_init_data {
+	uint32_t init_request;
+};
+
+enum {
+	MDP_PP_DISABLE,
+	MDP_PP_ENABLE,
+};
+
 enum {
 	DCM_UNINIT,
 	DCM_UNBLANK,
@@ -998,6 +1005,7 @@ enum {
 	mdp_op_calib_buffer,
 	mdp_op_calib_dcm_state,
 	mdp_op_max,
+	mdp_op_pp_init_cfg,
 };
 
 enum {
@@ -1029,6 +1037,7 @@ struct msmfb_mdp_pp {
 		struct mdss_ad_input ad_input;
 		struct mdp_calib_config_buffer calib_buffer;
 		struct mdp_calib_dcm_state calib_dcm;
+		struct mdp_pp_init_data init_data;
 	} data;
 };
 
@@ -1146,13 +1155,6 @@ struct msmfb_mixer_info_req {
 	int mixer_num;
 	int cnt;
 	struct mdp_mixer_info info[MAX_PIPE_PER_MIXER];
-};
-
-struct msmfb_reg_access {
-	uint8_t address;
-	uint8_t use_hs_mode;
-	uint32_t buffer_size;
-	uint8_t *buffer;
 };
 
 enum {

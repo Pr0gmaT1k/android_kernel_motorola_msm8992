@@ -48,7 +48,6 @@
 #include <linux/sched/rt.h>
 #include <linux/timer.h>
 #include <linux/freezer.h>
-#include <linux/irq_work.h>
 
 #include <asm/uaccess.h>
 
@@ -231,7 +230,7 @@ again:
 		 * completed. There is no conflict as we hold the lock until
 		 * the timer is enqueued.
 		 */
-		if (unlikely(hrtimer_callback_running(timer)))
+		if (unlikely(hrtimer_callback_running_relaxed(timer)))
 			return base;
 
 		/* See the comment in lock_timer_base() */
@@ -639,7 +638,7 @@ static int hrtimer_reprogram(struct hrtimer *timer,
 	 * reprogramming is handled either by the softirq, which called the
 	 * callback or at the end of the hrtimer_interrupt.
 	 */
-	if (hrtimer_callback_running(timer))
+	if (hrtimer_callback_running_relaxed(timer))
 		return 0;
 
 	/*
@@ -729,20 +728,6 @@ static void retrigger_next_event(void *arg)
 	raw_spin_unlock(&base->lock);
 }
 
-#ifdef CONFIG_SMP
-static void raise_hrtimer_softirq(struct irq_work *arg)
-{
-	if (!hrtimer_hres_active())
-		return;
-
-	raise_softirq(HRTIMER_SOFTIRQ);
-}
-
-static DEFINE_PER_CPU(struct irq_work, hrtimer_kick_work) = {
-	.func = raise_hrtimer_softirq,
-};
-#endif
-
 /*
  * Switch to high resolution mode
  */
@@ -806,22 +791,6 @@ static inline void hrtimer_init_hres(struct hrtimer_cpu_base *base) { }
 static inline void retrigger_next_event(void *arg) { }
 
 #endif /* CONFIG_HIGH_RES_TIMERS */
-
-#ifdef CONFIG_SMP
-
-static void kick_remote_cpu(int cpu)
-{
-	get_cpu();
-	if (cpu_online(cpu))
-		irq_work_queue_on(&per_cpu(hrtimer_kick_work, cpu), cpu);
-	put_cpu();
-}
-
-#else
-
-static inline void kick_remote_cpu(int cpu) { }
-
-#endif
 
 /*
  * Clock realtime was set
@@ -1010,7 +979,7 @@ int __hrtimer_start_range_ns(struct hrtimer *timer, ktime_t tim,
 {
 	struct hrtimer_clock_base *base, *new_base;
 	unsigned long flags;
-	int ret, leftmost, kick = 0, cpu;
+	int ret, leftmost;
 
 	base = lock_hrtimer_base(timer, &flags);
 
@@ -1038,13 +1007,11 @@ int __hrtimer_start_range_ns(struct hrtimer *timer, ktime_t tim,
 
 	leftmost = enqueue_hrtimer(timer, new_base);
 
-	cpu = new_base->cpu_base->cpu;
-	kick = (leftmost && (cpu != smp_processor_id()));
-
 	/*
 	 * Only allow reprogramming if the new base is on this CPU.
 	 * (it might still be on another CPU if the timer was pending)
 	 *
+	 * XXX send_remote_softirq() ?
 	 */
 	if (leftmost && new_base->cpu_base == &__get_cpu_var(hrtimer_bases)
 		&& hrtimer_enqueue_reprogram(timer, new_base)) {
@@ -1063,9 +1030,6 @@ int __hrtimer_start_range_ns(struct hrtimer *timer, ktime_t tim,
 	}
 
 	unlock_hrtimer_base(timer, &flags);
-
-	if (kick)
-		kick_remote_cpu(cpu);
 
 	return ret;
 }
@@ -1126,7 +1090,7 @@ int hrtimer_try_to_cancel(struct hrtimer *timer)
 
 	base = lock_hrtimer_base(timer, &flags);
 
-	if (!hrtimer_callback_running(timer))
+	if (!hrtimer_callback_running_relaxed(timer))
 		ret = remove_hrtimer(timer, base);
 
 	unlock_hrtimer_base(timer, &flags);
@@ -1656,6 +1620,11 @@ SYSCALL_DEFINE2(nanosleep, struct timespec __user *, rqtp,
 		struct timespec __user *, rmtp)
 {
 	struct timespec tu;
+#ifdef VENDOR_EDIT
+	//xianglin add for [RAINS-3040]
+	struct timespec ctu;
+	struct task_struct *g_leader = current->group_leader;
+#endif
 
 	if (copy_from_user(&tu, rqtp, sizeof(tu)))
 		return -EFAULT;
@@ -1663,6 +1632,15 @@ SYSCALL_DEFINE2(nanosleep, struct timespec __user *, rqtp,
 	if (!timespec_valid(&tu))
 		return -EINVAL;
 
+#ifdef VENDOR_EDIT
+	getnstimeofday(&ctu);
+	ctu = timespec_add(ctu, tu);
+	if (timespec_compare(&ctu, &g_leader->ttu) > 0) {
+		g_leader->ttu.tv_sec = ctu.tv_sec;
+		g_leader->ttu.tv_nsec = ctu.tv_nsec;
+	}
+#endif
+ 
 	return hrtimer_nanosleep(&tu, rmtp, HRTIMER_MODE_REL, CLOCK_MONOTONIC);
 }
 
@@ -1674,7 +1652,6 @@ static void __cpuinit init_hrtimers_cpu(int cpu)
 	struct hrtimer_cpu_base *cpu_base = &per_cpu(hrtimer_bases, cpu);
 	int i;
 
-	cpu_base->cpu = cpu;
 	for (i = 0; i < HRTIMER_MAX_CLOCK_BASES; i++) {
 		cpu_base->clock_base[i].cpu_base = cpu_base;
 		timerqueue_init_head(&cpu_base->clock_base[i].active);
@@ -1693,7 +1670,7 @@ static void migrate_hrtimer_list(struct hrtimer_clock_base *old_base,
 
 	while ((node = timerqueue_getnext(&old_base->active))) {
 		timer = container_of(node, struct hrtimer, node);
-		BUG_ON(hrtimer_callback_running(timer));
+		BUG_ON(hrtimer_callback_running_relaxed(timer));
 		debug_deactivate(timer);
 
 		/*

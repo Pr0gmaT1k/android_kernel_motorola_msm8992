@@ -65,7 +65,7 @@ config LOCALVERSION
 
 config LOCALVERSION_AUTO
 	bool "Automatically append version information to the version string"
-	default y
+	default n
 	help
 	  This will try to automatically determine if the current tree is a
 	  release tree by looking for git tags that belong to the current
@@ -580,13 +580,16 @@ config RCU_FAST_NO_HZ
 	depends on NO_HZ_COMMON && SMP
 	default n
 	help
-	  This option causes RCU to attempt to accelerate grace periods in
-	  order to allow CPUs to enter dynticks-idle state more quickly.
-	  On the other hand, this option increases the overhead of the
-	  dynticks-idle checking, thus degrading scheduling latency.
+	  This option permits CPUs to enter dynticks-idle state even if
+	  they have RCU callbacks queued, and prevents RCU from waking
+	  these CPUs up more than roughly once every four jiffies (by
+	  default, you can adjust this using the rcutree.rcu_idle_gp_delay
+	  parameter), thus improving energy efficiency.  On the other
+	  hand, this option increases the duration of RCU grace periods,
+	  for example, slowing down synchronize_rcu().
 
-	  Say Y if energy efficiency is critically important, and you don't
-	  care about real-time response.
+	  Say Y if energy efficiency is critically important, and you
+	  	don't care about increased grace-period durations.
 
 	  Say N if you are unsure.
 
@@ -738,7 +741,7 @@ config IKCONFIG_PROC
 config LOG_BUF_SHIFT
 	int "Kernel log buffer size (16 => 64KB, 17 => 128KB)"
 	range 12 21
-	default 17
+	default 18
 	help
 	  Select kernel log buffer size as a power of 2.
 	  Examples:
@@ -849,6 +852,14 @@ config CPUSETS
 	  This is primarily useful on large SMP or NUMA systems.
 
 	  Say N if unsure.
+
+config TASK_CPUFREQ_STATS
+	bool "task cpufreq stats support"
+	help
+	  Export cumulative time spent by tasks/processes in each frequency
+          for each cpu through /proc/<pid> interface. The statistics are
+          available during the lifetime of tasks/processes as responses to
+          commands.
 
 config PROC_PID_CPUSET
 	bool "Include legacy /proc/<pid>/cpuset file"
@@ -1639,6 +1650,18 @@ config BASE_SMALL
 	default 0 if BASE_FULL
 	default 1 if !BASE_FULL
 
+config SYSTEM_TRUSTED_KEYRING
+	bool "Provide system-wide ring of trusted keys"
+	depends on KEYS
+	help
+	  Provide a system keyring to which trusted keys can be added.  Keys in
+	  the keyring are considered to be trusted.  Keys may be added at will
+	  by the kernel from compiled-in data and from hardware key stores, but
+	  userspace may only add extra keys if those keys can be verified by
+	  keys already in the keyring.
+
+	  Keys in this keyring are used by module signature checking.
+
 menuconfig MODULES
 	bool "Enable loadable module support"
 	help
@@ -1711,6 +1734,7 @@ config MODULE_SRCVERSION_ALL
 config MODULE_SIG
 	bool "Module signature verification"
 	depends on MODULES
+	select SYSTEM_TRUSTED_KEYRING
 	select KEYS
 	select CRYPTO
 	select ASYMMETRIC_KEY_TYPE
@@ -1788,32 +1812,6 @@ config MODULE_SIG_HASH
 	default "sha384" if MODULE_SIG_SHA384
 	default "sha512" if MODULE_SIG_SHA512
 
-config MODULE_WHITELIST
-	bool "Only allow white listed modules to be loaded"
-	help
-	  If you say Y here, the kernel will generate a SHA1 hash of
-	  each module that is to be loaded and check this hash against
-	  a list of known hashes. If the module to be loaded's hash is
-	  not found in this list, the kernel will refuse to load the module.
-
-	  The list of known hashes is passed into the kernel via
-	  /sys/kernel/module_whitelist. The whitelist is a write-once list;
-	  after the list is loaded it cannot be modified until the device
-	  is rebooted. At the present time the list is limimited to PAGE_SIZE
-	  (usually 4096 bytes).
-
-	  If unsure, say N.
-
-config MODULE_EXTRA_COPY
-	bool "Keep an extra copy of a module while it is loading"
-	help
-	  Keep an extra copy of the module code while the module is loading.
-	  This extra copy contains the raw, unlinked code.  It is freed after
-	  the module's initialization function has finished loading.  This
-	  option is useful if you want to make a self-contained
-	  FIPS-140-compliant module which must check its own integrity.
-
-	  If unsure, say N.
 endif # MODULES
 
 config INIT_ALL_POSSIBLE
@@ -1856,3 +1854,11 @@ config ASN1
 	  functions to call on what tags.
 
 source "kernel/Kconfig.locks"
+
+#add by jiachenghui for support oem trace,2015/05/09
+#ifdef VENDOR_EDIT
+config OEM_DEBUG_SUPORT
+	bool
+	default y
+#endif
+#end add by jiachenghui for support oem trace,2015/05/09

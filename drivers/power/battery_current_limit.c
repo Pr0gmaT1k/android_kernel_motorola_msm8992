@@ -190,8 +190,7 @@ static enum bcl_threshold_state bcl_vph_state = BCL_THRESHOLD_DISABLED,
 		bcl_ibat_state = BCL_THRESHOLD_DISABLED,
 		bcl_soc_state = BCL_THRESHOLD_DISABLED;
 static DEFINE_MUTEX(bcl_notify_mutex);
-static uint32_t prev_hotplug_request, bcl_hotplug_request;
-static uint32_t bcl_hotplug_mask, bcl_soc_hotplug_mask;
+static uint32_t bcl_hotplug_request, bcl_hotplug_mask, bcl_soc_hotplug_mask;
 static uint32_t bcl_frequency_mask;
 static struct work_struct bcl_hotplug_work;
 static DEFINE_MUTEX(bcl_hotplug_mutex);
@@ -255,7 +254,6 @@ static void __ref bcl_handle_hotplug(struct work_struct *work)
 		}
 	}
 
-	prev_hotplug_request = bcl_hotplug_request;
 	mutex_unlock(&bcl_hotplug_mutex);
 	return;
 }
@@ -352,6 +350,11 @@ static void update_cpu_freq(void)
 static void power_supply_callback(struct power_supply *psy)
 {
 	static struct power_supply *bms_psy;
+	//taokai@bsp add for detecting usb status 2016.04.16
+	static struct power_supply *usb_psy;
+	int usb_state;
+	bool is_usb_present;
+	//taokai@bsp add end 2016.04.16
 	union power_supply_propval ret = {0,};
 	int battery_percentage;
 	enum bcl_threshold_state prev_soc_state;
@@ -360,7 +363,16 @@ static void power_supply_callback(struct power_supply *psy)
 		pr_debug("BCL is not enabled\n");
 		return;
 	}
-
+	//taokai@bsp add for detecting usb status 2016.04.16
+	if (!usb_psy)
+		usb_psy = power_supply_get_by_name("usb");
+	if (usb_psy) {
+		usb_state = usb_psy->get_property(usb_psy,
+				POWER_SUPPLY_PROP_PRESENT, &ret);
+		if (usb_state == 0)
+			is_usb_present = ret.intval;
+	}
+	//taokai@bsp add end 2016.04.16
 	if (!bms_psy)
 		bms_psy = power_supply_get_by_name("bms");
 	if (bms_psy) {
@@ -370,8 +382,14 @@ static void power_supply_callback(struct power_supply *psy)
 		battery_soc_val = battery_percentage;
 		pr_debug("Battery SOC reported:%d", battery_soc_val);
 		prev_soc_state = bcl_soc_state;
-		bcl_soc_state = (battery_soc_val <= soc_low_threshold) ?
+		//taokai@bsp add for deceding bcl_soc_state by usb status  2016.04.16
+		pr_debug("is_usb_present:%d", is_usb_present);
+		if(is_usb_present)
+			bcl_soc_state = BCL_HIGH_THRESHOLD;
+		else
+			bcl_soc_state = (battery_soc_val <= soc_low_threshold) ?
 					BCL_LOW_THRESHOLD : BCL_HIGH_THRESHOLD;
+		//taokai@bsp add end 2016.04.16
 		if (bcl_soc_state == prev_soc_state)
 			return;
 		if (bcl_hotplug_enabled)
@@ -380,7 +398,7 @@ static void power_supply_callback(struct power_supply *psy)
 	}
 }
 
-int bcl_get_battery_voltage(int *vbatt_mv)
+static int bcl_get_battery_voltage(int *vbatt_mv)
 {
 	static struct power_supply *psy;
 	union power_supply_propval ret = {0,};
@@ -931,13 +949,13 @@ mode_store(struct device *dev, struct device_attribute *attr,
 	if (!gbcl)
 		return -EPERM;
 
-	if (!strncmp(buf, "enable", 6)) {
+	if (!strcmp(buf, "enable")) {
 		bcl_update_online_mask();
 		bcl_mode_set(BCL_DEVICE_ENABLED);
 		pr_info("bcl enabled\n");
-	} else if (!strncmp(buf, "disable", 7)) {
-		battery_soc_val = 100;
+	} else if (!strcmp(buf, "disable")) {
 		bcl_mode_set(BCL_DEVICE_DISABLED);
+		cpumask_clear(bcl_cpu_online_mask);
 		pr_info("bcl disabled\n");
 	} else {
 		return -EINVAL;
@@ -1707,30 +1725,11 @@ static uint32_t get_mask_from_core_handle(struct platform_device *pdev,
 	return mask;
 }
 
-static bool bcl_mmi_factory(void)
-{
-	struct device_node *np = of_find_node_by_path("/chosen");
-	bool factory = false;
-
-	if (np)
-		factory = of_property_read_bool(np, "mmi,factory-cable");
-
-	of_node_put(np);
-
-	return factory;
-}
-
-
 static int bcl_probe(struct platform_device *pdev)
 {
 	struct bcl_context *bcl = NULL;
 	int ret = 0;
 	enum bcl_device_mode bcl_mode = BCL_DEVICE_DISABLED;
-
-	if (bcl_mmi_factory()) {
-		pr_info("Factory Mode, Disable BCL\n");
-		return -ENODEV;
-	}
 
 	bcl = devm_kzalloc(&pdev->dev, sizeof(struct bcl_context), GFP_KERNEL);
 	if (!bcl) {

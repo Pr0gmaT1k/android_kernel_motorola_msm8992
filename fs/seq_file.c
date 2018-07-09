@@ -221,8 +221,10 @@ ssize_t seq_read(struct file *file, char __user *buf, size_t size, loff_t *ppos)
 		size -= n;
 		buf += n;
 		copied += n;
-		if (!m->count)
+		if (!m->count) {
+			m->from = 0;
 			m->index++;
+		}
 		if (!size)
 			goto Done;
 	}
@@ -647,7 +649,7 @@ int seq_release_private(struct inode *inode, struct file *file)
 {
 	struct seq_file *seq = file->private_data;
 
-	kvfree(seq->private);
+	kfree(seq->private);
 	seq->private = NULL;
 	return seq_release(inode, file);
 }
@@ -660,10 +662,7 @@ void *__seq_open_private(struct file *f, const struct seq_operations *ops,
 	void *private;
 	struct seq_file *seq;
 
-	if (psize > PAGE_SIZE)
-		private = vzalloc(psize);
-	else
-		private = kzalloc(psize, GFP_KERNEL);
+	private = kzalloc(psize, GFP_KERNEL);
 	if (private == NULL)
 		goto out;
 
@@ -676,7 +675,7 @@ void *__seq_open_private(struct file *f, const struct seq_operations *ops,
 	return private;
 
 out_free:
-	kvfree(private);
+	kfree(private);
 out:
 	return NULL;
 }

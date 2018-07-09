@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -80,17 +80,6 @@
 			qcom,acc = <&acc0>;
 			qcom,ldo = <&ldo0>;
 			next-level-cache = <&L2_0>;
-			// The currents(uA) correspond to the frequencies in the
-			// frequency table.
-			current = < 18250 //384000 kHZ
-			            24330 //460800 kHZ
-			            26920 //600000 kHZ
-			            34600 //672000 kHz
-			            38150 //787200 kHZ
-			            46880 //864000 kHZ
-			            55940 //960000 kHZ
-			            81740 //1248000 kHZ
-			            105870>; //1440000 kHZ
 			L2_0: l2-cache {
 			      compatible = "arm,arch-cache";
 			      cache-level = <2>;
@@ -115,17 +104,6 @@
 			qcom,acc = <&acc1>;
 			qcom,ldo = <&ldo1>;
 			next-level-cache = <&L2_0>;
-			// The currents(uA) correspond to the frequencies in the
-			// frequency table.
-			current = < 7665 //384000 kHZ
-			            10219 //460800 kHZ
-			            11306 //600000 kHZ
-			            14532 //672000 kHz
-			            16023 //787200 kHZ
-			            19690 //864000 kHZ
-			            23495 //960000 kHZ
-			            34331 //1248000 kHZ
-			            44465>; //1440000 kHZ
 			L1_I_1: l1-icache {
 				compatible = "arm,arch-cache";
 				qcom,dump-size = <0x9040>;
@@ -144,17 +122,6 @@
 			qcom,acc = <&acc2>;
 			qcom,ldo = <&ldo2>;
 			next-level-cache = <&L2_0>;
-			// The currents(uA) correspond to the frequencies in the
-			// frequency table.
-			current = < 7848 //384000 kHZ
-			            10462 //460800 kHZ
-			            11576 //600000 kHZ
-			            14878 //672000 kHz
-			            16405 //787200 kHZ
-			            20158 //864000 kHZ
-			            24054 //960000 kHZ
-			            35148 //1248000 kHZ
-			            45524>; //1440000 kHZ
 			L1_I_2: l1-icache {
 				compatible = "arm,arch-cache";
 				qcom,dump-size = <0x9040>;
@@ -173,17 +140,6 @@
 			qcom,acc = <&acc3>;
 			qcom,ldo = <&ldo3>;
 			next-level-cache = <&L2_0>;
-			// The currents(uA) correspond to the frequencies in the
-			// frequency table.
-			current = < 8760 //384000 kHZ
-			            11678 //460800 kHZ
-			            12922 //600000 kHZ
-			            16608 //672000 kHz
-			            18312 //787200 kHZ
-			            22502 //864000 kHZ
-			            26851 //960000 kHZ
-			            39235 //1248000 kHZ
-			            50818>; //1440000 kHZ
 			L1_I_3: l1-icache {
 				compatible = "arm,arch-cache";
 				qcom,dump-size = <0x9040>;
@@ -194,7 +150,7 @@
 			};
 		};
 
-		CPU4: cpu@4 {
+		CPU4: cpu@100 {
 			device_type = "cpu";
 			compatible = "arm,cortex-a57";
 			reg = <0x100>;
@@ -202,21 +158,6 @@
 			qcom,acc = <&acc4>;
 			qcom,ldo = <&ldo4>;
 			next-level-cache = <&L2_1>;
-			// The currents(uA) correspond to the frequencies in the
-			// frequency table.
-			current = < 67740 //384000 kHZ
-			            82960 //480000 kHZ
-			            105870 //633600 kHZ
-			            133160 //768000 kHZ
-			            150160 //864000 kHZ
-			            167180 //960000 kHZ
-			            230040 //1248000 kHZ
-			            261430 //1344000 kHZ
-			            290460 //1440000 kHZ
-			            317200 //1536000 kHZ
-			            352870 //1632000 kHZ
-			            374360 //1689600 kHZ
-			            443880>; //1824000 kHZ
 			L2_1: l2-cache {
 			      compatible = "arm,arch-cache";
 			      cache-level = <2>;
@@ -233,7 +174,7 @@
 			};
 		};
 
-		CPU5: cpu@5 {
+		CPU5: cpu@101 {
 			device_type = "cpu";
 			compatible = "arm,cortex-a57";
 			reg = <0x101>;
@@ -241,21 +182,6 @@
 			qcom,acc = <&acc5>;
 			qcom,ldo = <&ldo5>;
 			next-level-cache = <&L2_1>;
-			// The currents(uA) correspond to the frequencies in the
-			// frequency table.
-			current = < 49450 //384000 kHZ
-			            60561 //480000 kHZ
-			            77285 //633600 kHZ
-			            97207 //768000 kHZ
-			            109617 //864000 kHZ
-			            122041 //960000 kHZ
-			            167929 //1248000 kHZ
-			            190844 //1344000 kHZ
-			            212036 //1440000 kHZ
-			            231556 //1536000 kHZ
-			            257595 //1632000 kHZ
-			            273283 //1689600 kHZ
-			            324032>; //1824000 kHZ
 			L1_I_101: l1-icache {
 				compatible = "arm,arch-cache";
 				qcom,dump-size = <0xd840>;
@@ -326,7 +252,7 @@
 			linux,reserve-contiguous-region;
 			linux,reserve-region;
 			linux,remove-completely;
-			reg = <0 0x09000000 0 0x6400000>;
+			reg = <0 0x09000000 0 0x5a00000>;
 			label = "modem_mem";
 		};
 	};
@@ -361,6 +287,12 @@
 			     <1 1 0xf08>;
 		clock-frequency = <19200000>;
 	};
+
+        qcom,mpm2-sleep-counter@fc4a3000 {
+                compatible = "qcom,mpm2-sleep-counter";
+                reg = <0xfc4a3000 0x1000>;
+                clock-frequency = <32768>;
+        };
 
 	timer@f9020000 {
 		#address-cells = <1>;
@@ -526,6 +458,8 @@
 			     <1 7 0>;
 		interrupt-names = "pri-dbe-irq",
 				  "sec-dbe-irq",
+				  "pri-ext-irq",
+				  "sec-ext-irq",
 				  "cci-irq",
 				  "sbe-irq";
 		poll-delay-ms = <5000>;
@@ -1216,7 +1150,7 @@
 		pinctrl-0 = <&wcd_intr_default>;
 	};
 
-	i2c_11: i2c@f9967000 { /* BLSP2 QUP5 */
+	i2c_5: i2c@f9967000 { /* BLSP2 QUP5 */
 		compatible = "qcom,i2c-msm-v2";
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -1356,16 +1290,16 @@
 			qcom,cdc-reset-gpio = <&msm_gpio 68 0>;
 
 			cdc-vdd-buck-supply = <&pm8994_s5>;
-			qcom,cdc-vdd-buck-voltage = <1800000 2150000>;
+			qcom,cdc-vdd-buck-voltage = <2150000 2150000>;
 			qcom,cdc-vdd-buck-current = <650000>;
 
 			cdc-vdd-tx-h-supply = <&pm8994_s4>;
 			qcom,cdc-vdd-tx-h-voltage = <1800000 1800000>;
-			qcom,cdc-vdd-tx-h-current = <45000>;
+			qcom,cdc-vdd-tx-h-current = <25000>;
 
 			cdc-vdd-rx-h-supply = <&pm8994_s4>;
 			qcom,cdc-vdd-rx-h-voltage = <1800000 1800000>;
-			qcom,cdc-vdd-rx-h-current = <45000>;
+			qcom,cdc-vdd-rx-h-current = <25000>;
 
 			cdc-vddpx-1-supply = <&pm8994_s4>;
 			qcom,cdc-vddpx-1-voltage = <1800000 1800000>;
@@ -1807,6 +1741,7 @@
 				<81 512 2048000 4096000>; /* Max. bandwidth */
 		qcom,bus-bw-vectors-bps = <0 400000 20000000 25000000 50000000
 						100000000 200000000 4294967295>;
+
 		status = "disabled";
 	};
 
@@ -2722,9 +2657,10 @@
 		compatible = "qcom,bcl";
 		qcom,bcl-enable;
 		qcom,bcl-framework-interface;
-		qcom,bcl-hotplug-list = <&CPU4 &CPU5>;
 		qcom,bcl-freq-control-list = <&CPU4 &CPU5>;
-		qcom,bcl-soc-hotplug-list = <&CPU4 &CPU5>;
+		// TheCrazyLex@PA Remove BCL hotplug feature
+		// qcom,bcl-hotplug-list = <&CPU4 &CPU5>;
+		// qcom,bcl-soc-hotplug-list = <&CPU4 &CPU5>;
 		qcom,ibat-monitor {
 			qcom,low-threshold-uamp = <3400000>;
 			qcom,high-threshold-uamp = <4200000>;
@@ -2757,7 +2693,6 @@
 
 		USB3_GDSC-supply = <&gdsc_usb30>;
 		vdda33-supply = <&pm8994_l24>;
-		vdda18-supply = <&pm8994_l6>;
 		vbus_dwc3-supply = <&smbcharger_charger_otg>;
 		qcom,dwc-usb3-msm-tx-fifo-size = <29696>;
 		qcom,dwc-usb3-msm-qdss-tx-fifo-size = <8192>;
@@ -2902,20 +2837,6 @@
 			qcom,descriptor-fifo-size = <0x800>;
 			qcom,reset-bam-on-connect;
 		};
-		/* USB BAM pipe (consumer) configuration for accelerated DPL */
-		qcom,pipe3 {
-			label = "ssusb-dpl-ipa-in-1";
-			qcom,usb-bam-mem-type = <2>;
-			qcom,bam-type = <0>;
-			qcom,dir = <1>;
-			qcom,pipe-num = <1>;
-			qcom,peer-bam = <2>;
-			qcom,dst-bam-physical-address = <0xf9304000>;
-			qcom,dst-bam-pipe-index = <2>;
-			qcom,data-fifo-size = <0x8000>;
-			qcom,descriptor-fifo-size = <0x2000>;
-			qcom,reset-bam-on-connect;
-	   };
 	};
 
 	usb_otg: usb@f9a55000 {

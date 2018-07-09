@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2015, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -55,7 +55,6 @@ struct msm_rpm_driver_data {
 	const char *ch_name;
 	uint32_t ch_type;
 	smd_channel_t *ch_info;
-	struct work_struct work;
 	spinlock_t smd_lock_write;
 	spinlock_t smd_lock_read;
 	struct completion smd_open;
@@ -64,7 +63,7 @@ struct msm_rpm_driver_data {
 #define DEFAULT_BUFFER_SIZE 256
 #define DEBUG_PRINT_BUFFER_SIZE 512
 #define MAX_SLEEP_BUFFER 128
-#define GFP_FLAG(noirq) (noirq ? GFP_ATOMIC : GFP_NOFS)
+#define GFP_FLAG(noirq) (noirq ? GFP_ATOMIC : GFP_KERNEL)
 #define INV_RSC "resource does not exist"
 #define ERR "err\0"
 #define MAX_ERR_BUFFER_SIZE 128
@@ -1219,10 +1218,7 @@ int msm_rpm_wait_for_ack(uint32_t msg_id)
 		return rc;
 
 	rt_mutex_lock(&msm_rpm_smd_lock);
-	if (!wait_for_completion_timeout(&elem->ack, 10*HZ)) {
-		pr_err("%s TIMEOUT msg_id %d\n", __func__, msg_id);
-		BUG();
-	}
+	wait_for_completion(&elem->ack);
 	rt_mutex_unlock(&msm_rpm_smd_lock);
 	trace_rpm_ack_recd(0, msg_id);
 

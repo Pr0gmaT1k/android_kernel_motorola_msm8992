@@ -18,20 +18,13 @@
 
 #include <linux/workqueue.h>
 #include <linux/power_supply.h>
-#include <linux/hrtimer.h>
 
 #include <linux/usb/otg.h>
 #include "power.h"
 
 #define DWC3_IDEV_CHG_MAX 1500
 #define DWC3_HVDCP_CHG_MAX 1800
-#define DWC3_IDEV_CHG_DCP 1300
-#define DWC3_IDEV_CHG_PROP 1100
-#define DWC3_IDEV_CHG_MIN 500
-#define DWC_LS_DM	  0x1
-#define DWC_LS_DP	  0x2
-#define DWC3_LS		  0x3
-
+#define DWC3_SDP_CHG_MAX 500
 /*
  * Module param to override current drawn for DCP charger
  * Declared in dwc3-msm module
@@ -64,9 +57,6 @@ struct dwc3_otg {
 	struct completion	dwc3_xcvr_vbus_init;
 	int			charger_retry_count;
 	int			vbus_retry_count;
-	int                     falsesdp_retry_count;
-	struct timer_list	chg_check_timer;
-	bool			notify_psy;	/* Set PSY Type Again */
 };
 
 /**
@@ -104,9 +94,6 @@ struct dwc3_charger {
 	/* to notify OTG about charger detection completion, provided by OTG */
 	void	(*notify_detection_complete)(struct usb_otg *otg,
 						struct dwc3_charger *charger);
-	/* get the charger linestate */
-	u32	(*get_linestate)(struct dwc3_charger *charger);
-	bool			factory_mode;
 };
 
 /* for external charger driver */

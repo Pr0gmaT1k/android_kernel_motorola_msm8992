@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2015, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -52,13 +52,6 @@ struct fb_cursor32 {
 	compat_caddr_t mask;
 	struct fbcurpos	hot;
 	struct fb_image32 image;
-};
-
-struct msmfb_reg_access32 {
-	uint8_t address;
-	uint8_t use_hs_mode;
-	uint32_t buffer_size;
-	compat_caddr_t buffer;
 };
 
 struct mdp_ccs32 {
@@ -335,6 +328,10 @@ struct mdss_calib_cfg32 {
 	uint32_t calib_mask;
 };
 
+struct mdp_pp_init_data32 {
+	uint32_t init_request;
+};
+
 struct mdp_histogram_cfg32 {
 	uint32_t ops;
 	uint32_t block;
@@ -381,6 +378,7 @@ struct msmfb_mdp_pp32 {
 		struct mdss_ad_input32 ad_input;
 		struct mdp_calib_config_buffer32 calib_buffer;
 		struct mdp_calib_dcm_state32 calib_dcm;
+		struct mdp_pp_init_data32 init_data;
 	} data;
 };
 

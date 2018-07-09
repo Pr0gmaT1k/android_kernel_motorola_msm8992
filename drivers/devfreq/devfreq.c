@@ -304,7 +304,6 @@ void devfreq_monitor_suspend(struct devfreq *devfreq)
 		return;
 	}
 
-	devfreq_update_status(devfreq, devfreq->previous_freq);
 	devfreq->stop_polling = true;
 	mutex_unlock(&devfreq->lock);
 	cancel_delayed_work_sync(&devfreq->work);
@@ -321,8 +320,6 @@ EXPORT_SYMBOL(devfreq_monitor_suspend);
  */
 void devfreq_monitor_resume(struct devfreq *devfreq)
 {
-	unsigned long freq;
-
 	mutex_lock(&devfreq->lock);
 	if (!devfreq->stop_polling)
 		goto out;
@@ -331,13 +328,7 @@ void devfreq_monitor_resume(struct devfreq *devfreq)
 			devfreq->profile->polling_ms)
 		queue_delayed_work(devfreq_wq, &devfreq->work,
 			msecs_to_jiffies(devfreq->profile->polling_ms));
-
-	devfreq->last_stat_updated = jiffies;
 	devfreq->stop_polling = false;
-
-	if (devfreq->profile->get_cur_freq &&
-		!devfreq->profile->get_cur_freq(devfreq->dev.parent, &freq))
-		devfreq->previous_freq = freq;
 
 out:
 	mutex_unlock(&devfreq->lock);
@@ -418,7 +409,7 @@ static int devfreq_notifier_call(struct notifier_block *nb, unsigned long type,
  * @devfreq:	the devfreq struct
  * @skip:	skip calling device_unregister().
  */
-static void _remove_devfreq(struct devfreq *devfreq)
+static void _remove_devfreq(struct devfreq *devfreq, bool skip)
 {
 	mutex_lock(&devfreq_list_lock);
 	if (IS_ERR(find_device_devfreq(devfreq->dev.parent))) {
@@ -436,6 +427,11 @@ static void _remove_devfreq(struct devfreq *devfreq)
 	if (devfreq->profile->exit)
 		devfreq->profile->exit(devfreq->dev.parent);
 
+	if (!skip && get_device(&devfreq->dev)) {
+		device_unregister(&devfreq->dev);
+		put_device(&devfreq->dev);
+	}
+
 	mutex_destroy(&devfreq->lock);
 	kfree(devfreq);
 }
@@ -445,12 +441,14 @@ static void _remove_devfreq(struct devfreq *devfreq)
  * @dev:	the devfreq device
  *
  * This calls _remove_devfreq() if _remove_devfreq() is not called.
+ * Note that devfreq_dev_release() could be called by _remove_devfreq() as
+ * well as by others unregistering the device.
  */
 static void devfreq_dev_release(struct device *dev)
 {
 	struct devfreq *devfreq = to_devfreq(dev);
 
-	_remove_devfreq(devfreq);
+	_remove_devfreq(devfreq, true);
 }
 
 /**
@@ -561,8 +559,7 @@ int devfreq_remove_device(struct devfreq *devfreq)
 	if (!devfreq)
 		return -EINVAL;
 
-	device_unregister(&devfreq->dev);
-	put_device(&devfreq->dev);
+	_remove_devfreq(devfreq, false);
 
 	return 0;
 }
@@ -950,11 +947,11 @@ static ssize_t show_trans_table(struct device *dev, struct device_attribute *att
 {
 	struct devfreq *devfreq = to_devfreq(dev);
 	ssize_t len;
-	int i, j;
+	int i, j, err;
 	unsigned int max_state = devfreq->profile->max_state;
 
-	if (!devfreq->stop_polling &&
-			devfreq_update_status(devfreq, devfreq->previous_freq))
+	err = devfreq_update_status(devfreq, devfreq->previous_freq);
+	if (err)
 		return 0;
 
 	len = sprintf(buf, "   From  :   To\n");

@@ -564,11 +564,6 @@ static void usb_qdss_disconnect_work(struct work_struct *work)
 	}
 
 	msm_bam_set_qdss_usb_active(false);
-	/*
-	 * Decrement usage count which was incremented
-	 * before calling connect work
-	 */
-	usb_gadget_autopm_put_async(qdss->gadget);
 }
 
 static void qdss_disable(struct usb_function *f)
@@ -597,12 +592,6 @@ static void qdss_disable(struct usb_function *f)
 	case USB_GADGET_XPORT_BAM2BAM_IPA:
 	case USB_GADGET_XPORT_BAM_DMUX:
 		spin_unlock_irqrestore(&qdss->lock, flags);
-		/* Disable usb irq for CI gadget. It will be enabled in
-		 * usb_bam_disconnect_pipe() after disconnecting all pipes
-		 * and USB BAM reset is done.
-		 */
-		if (!gadget_is_dwc3(qdss->cdev->gadget))
-			msm_usb_irq_disable(true);
 		usb_qdss_disconnect_work(&qdss->disconnect_w);
 		return;
 	default:
@@ -614,8 +603,6 @@ static void qdss_disable(struct usb_function *f)
 	/*cancell all active xfers*/
 	qdss_eps_disable(f);
 	msm_bam_set_qdss_usb_active(true);
-	if (!gadget_is_dwc3(qdss->cdev->gadget))
-		msm_usb_irq_disable(true);
 	queue_work(qdss->wq, &qdss->disconnect_w);
 }
 
@@ -674,7 +661,7 @@ static void usb_qdss_connect_work(struct work_struct *work)
 	dxport = qdss_ports[qdss->port_num].data_xport;
 	ctrl_xport = qdss_ports[qdss->port_num].ctrl_xport;
 	port_num = qdss_ports[qdss->port_num].data_xport_num;
-	pr_debug("%s: data xport: %s dev: %p portno: %d\n",
+	pr_debug("%s: data xport: %s dev: %pK portno: %d\n",
 			__func__, xport_to_str(dxport),
 			qdss, qdss->port_num);
 	if (qdss->port_num >= nr_qdss_ports) {
@@ -779,28 +766,22 @@ static int qdss_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 
 	dxport = qdss_ports[qdss->port_num].data_xport;
 
-	pr_debug("qdss_set_alt qdss pointer = %p\n", qdss);
-
-	qdss->gadget = gadget;
+	pr_debug("qdss_set_alt qdss pointer = %pK\n", qdss);
 
 	if (alt != 0)
-		goto fail1;
+		goto fail;
 
 	if (gadget->speed != USB_SPEED_SUPER &&
 		gadget->speed != USB_SPEED_HIGH) {
 		pr_err("qdss_st_alt: qdss supportes HS or SS only\n");
 		ret = -EINVAL;
-		goto fail1;
+		goto fail;
 	}
 
 	if (intf == qdss->data_iface_id) {
-		/* Increment usage count on connect */
-		usb_gadget_autopm_get_async(qdss->gadget);
 
-		if (config_ep_by_speed(gadget, f, qdss->port.data)) {
-			ret = -EINVAL;
-			goto fail;
-		}
+		if (config_ep_by_speed(gadget, f, qdss->port.data))
+			return -EINVAL;
 
 		if (dxport == USB_GADGET_XPORT_BAM2BAM_IPA ||
 				dxport == USB_GADGET_XPORT_BAM_DMUX) {
@@ -820,27 +801,23 @@ static int qdss_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 	} else if ((intf == qdss->ctrl_iface_id) &&
 	(qdss->debug_inface_enabled)) {
 
-		if (config_ep_by_speed(gadget, f, qdss->port.ctrl_in)) {
-			ret = -EINVAL;
-			goto fail1;
-		}
+		if (config_ep_by_speed(gadget, f, qdss->port.ctrl_in))
+			return -EINVAL;
 
 		ret = usb_ep_enable(qdss->port.ctrl_in);
 		if (ret)
-			goto fail1;
+			goto fail;
 
 		qdss->port.ctrl_in->driver_data = qdss;
 		qdss->ctrl_in_enabled = 1;
 
-		if (config_ep_by_speed(gadget, f, qdss->port.ctrl_out)) {
-			ret = -EINVAL;
-			goto fail1;
-		}
+		if (config_ep_by_speed(gadget, f, qdss->port.ctrl_out))
+			return -EINVAL;
 
 
 		ret = usb_ep_enable(qdss->port.ctrl_out);
 		if (ret)
-			goto fail1;
+			goto fail;
 
 		qdss->port.ctrl_out->driver_data = qdss;
 		qdss->ctrl_out_enabled = 1;
@@ -865,9 +842,6 @@ static int qdss_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 	}
 	return 0;
 fail:
-	/* Decrement usage count in case of failure */
-	usb_gadget_autopm_put_async(qdss->gadget);
-fail1:
 	pr_err("qdss_set_alt failed\n");
 	qdss_eps_disable(f);
 	return ret;

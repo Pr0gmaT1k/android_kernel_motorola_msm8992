@@ -204,15 +204,6 @@ config BATTERY_MAX17042
 	  with MAX17042. This driver also supports max17047/50 chips which are
 	  improved version of max17042.
 
-config BATTERY_MAX17042_DEBUGFS
-	bool "Maxim MAX17042/17047/17050/8997/8966 Fuel Gauge debugfs support"
-	depends on BATTERY_MAX17042 && DEBUG_FS
-	help
-	  Say Y here to enable access to fuel gauge registers through debugfs.
-	  The registers are accessed through addr and data files.
-	  When this is turned on it will be easier to access the part
-	  to debug issues that might exist.
-
 config BATTERY_Z2
 	tristate "Z2 battery driver"
 	depends on I2C && MACH_ZIPIT2
@@ -412,15 +403,27 @@ config SMB135X_CHARGER
 	  The driver reports the charger status via the power supply framework.
 	  A charger status change triggers an IRQ via the device STAT pin.
 
-config MMI_WLS_CHARGER
-	tristate "MMI Wireless Charger"
+config SMB1360_CHARGER_FG
+	tristate "SMB1360 Charger and Fuel Guage"
 	depends on I2C
 	help
-	  Say Y to include support for MMI Wireless Charger.
-	  This a generic Wireless charger Driver used with
-	  MMI Products.
-	  The driver supports multiple vendor chips.
-	  The driver supports the Qi standard.
+	  Say Y to include support for SMB1360 Charger and Fuel Guage.
+	  SMB1360 is a single path switching mode charger capable of charging
+	  the battery with 1.5Amps of current. It supports a fuel gauge which
+	  uses voltage and coloumb counting for state of charge reporting.
+	  The driver reports the status via the power supply framework.
+	  A status change triggers an IRQ via the device STAT pin.
+
+config SMB358_CHARGER
+	tristate "SMB358 Battery Charger"
+	depends on I2C
+	help
+	  Say Y to include support for SMB358 Battery Charger.
+	  SMB358 is a single path switching mode charger capable of charging
+	  the battery with 2Amps of current.
+	  The driver supports charger enable/disable.
+	  The driver reports the charger status via the power supply framework.
+	  A charger status change triggers an IRQ via the device STAT pin.
 
 config BQ27520_TEST_ENABLE
 	bool "Enable BQ27520 Fuel Gauge Chip Test"

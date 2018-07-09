@@ -24,10 +24,16 @@ DTB_LIST := $(addsuffix .dtb,$(DTB_NAMES))
 else
 DTB_LIST := $(dtb-y)
 endif
+DTB_OBJS := $(addprefix arch/arm/boot/dts/,$(DTB_LIST))
+ifeq ("$(wildcard $(DTB_OBJS))","")
 DTB_OBJS := $(addprefix $(obj)/dts/,$(DTB_LIST))
+endif
 
 $(obj)/Image: vmlinux FORCE
 	$(call if_changed,objcopy)
+
+$(obj)/Image-dtb: $(obj)/Image $(DTB_OBJS) FORCE
+	$(call if_changed,cat)
 
 $(obj)/Image.gz: $(obj)/Image FORCE
 	$(call if_changed,gzip)

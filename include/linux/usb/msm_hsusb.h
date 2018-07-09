@@ -106,9 +106,6 @@ enum msm_usb_phy_type {
 };
 
 #define IDEV_CHG_MAX	1500
-#define IDEV_CHG_DCP	1300
-#define IDEV_CHG_PROP	1200
-#define IDEV_CHG_TA	1100
 #define IDEV_CHG_MIN	500
 #define IUNIT		100
 
@@ -220,14 +217,6 @@ enum usb_ctrl {
 };
 
 /**
- * USB ID state
- */
-enum usb_id_state {
-	USB_ID_GROUND = 0,
-	USB_ID_FLOAT,
-};
-
-/**
  * struct msm_otg_platform_data - platform device data
  *              for msm_otg driver.
  * @phy_init_seq: PHY configuration sequence. val, reg pairs
@@ -280,11 +269,6 @@ enum usb_id_state {
  * @usb_id_gpio: Gpio used for USB ID detection.
  * @bool phy_dvdd_always_on: PHY DVDD is supplied by always on PMIC LDO.
  * @bool emulation: Indicates whether we are running on emulation platform.
- * @bool mpp_id_routing: ID is routed via a single MPP that can be used to
-		trigger as well as sample ID voltage.
- * @mpp_id_amux_chan: AMUX Chan when ID MPP is in Analog mode
- * @mpp_id_pull:      Pull Value when ID MPP is in Digital mode.
- * @mpp_id_vin:       VIN (voltage level)  when ID MPP is in Digital mode.
  */
 struct msm_otg_platform_data {
 	int *phy_init_seq;
@@ -318,10 +302,6 @@ struct msm_otg_platform_data {
 	int usb_id_gpio;
 	bool phy_dvdd_always_on;
 	bool emulation;
-	bool mpp_id_routing;
-	unsigned int mpp_id_amux_chan;
-	unsigned int mpp_id_pull;
-	unsigned int mpp_id_vin;
 };
 
 /* phy related flags */
@@ -425,6 +405,7 @@ struct msm_otg_platform_data {
  * @bus_clks_enabled: indicates pcnoc/snoc/bimc clocks are on or not.
  * @chg_check_timer: The timer used to implement the workaround to detect
  *               very slow plug in of wall charger.
+ * @ui_enabled: USB Intterupt is enabled or disabled.
  * @is_ext_chg_dcp: To indicate whether charger detected by external entity
 		SMB hardware is DCP charger or not.
  * @pm_done: It is used to increment the pm counter using pm_runtime_get_sync.
@@ -433,9 +414,6 @@ struct msm_otg_platform_data {
 	     pm_done is set to true.
  * @ext_id_irq: IRQ for ID interrupt.
  * @phy_irq_pending: Gets set when PHY IRQ arrives in LPM.
- * host_suspend_wait: wait_queue on which USB core waits for USB entering lpm
-	     in host bus suspend case.
- * @id_state: Indicates USBID line status.
  */
 struct msm_otg {
 	struct usb_phy phy;
@@ -572,14 +550,13 @@ struct msm_otg {
 	enum usb_ext_chg_status ext_chg_active;
 	struct completion ext_chg_wait;
 	struct pinctrl *phy_pinctrl;
+	int ui_enabled;
 	bool is_ext_chg_dcp;
 	bool pm_done;
 	struct qpnp_vadc_chip	*vadc_dev;
 	int ext_id_irq;
 	bool phy_irq_pending;
 	wait_queue_head_t	host_suspend_wait;
-	enum usb_id_state id_state;
-	unsigned int vbus_state;
 };
 
 struct ci13xxx_platform_data {
@@ -693,7 +670,6 @@ void msm_bam_usb_host_notify_on_resume(void);
 void msm_bam_hsic_host_notify_on_resume(void);
 bool msm_bam_hsic_host_pipe_empty(void);
 void msm_bam_set_qdss_usb_active(bool is_active);
-bool msm_usb_bam_enable(enum usb_ctrl ctrl, bool bam_enable);
 #else
 static inline bool msm_bam_usb_lpm_ok(enum usb_ctrl ctrl) { return true; }
 static inline void msm_bam_notify_lpm_resume(enum usb_ctrl ctrl) {}
@@ -707,19 +683,11 @@ static inline void msm_bam_hsic_host_notify_on_resume(void) {}
 static inline void msm_bam_usb_host_notify_on_resume(void) {}
 static inline bool msm_bam_hsic_host_pipe_empty(void) { return true; }
 static inline void msm_bam_set_qdss_usb_active(bool is_active) {}
-static inline bool msm_usb_bam_enable(enum usb_ctrl ctrl, bool bam_enable)
-{
-	return true;
-}
 #endif
 #ifdef CONFIG_USB_CI13XXX_MSM
 void msm_hw_bam_disable(bool bam_disable);
-void msm_usb_irq_disable(bool disable);
 #else
 static inline void msm_hw_bam_disable(bool bam_disable)
-{
-}
-static inline void msm_usb_irq_disable(bool disable)
 {
 }
 #endif

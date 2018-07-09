@@ -18,7 +18,6 @@
 #include <linux/usb/hcd.h>
 #include <linux/platform_device.h>
 #include <linux/regulator/consumer.h>
-#include <linux/usb/msm_hsusb.h>
 
 #include "core.h"
 #include "dwc3_otg.h"
@@ -27,7 +26,6 @@
 #include "xhci.h"
 
 #define VBUS_REG_CHECK_DELAY	(msecs_to_jiffies(1000))
-#define CHG_RECHECK_DELAY	(jiffies + msecs_to_jiffies(2000))
 #define MAX_INVALID_CHRGR_RETRY 3
 static int max_chgr_retry_count = MAX_INVALID_CHRGR_RETRY;
 module_param(max_chgr_retry_count, int, S_IRUGO | S_IWUSR);
@@ -258,7 +256,6 @@ static void dwc3_ext_chg_det_done(struct usb_otg *otg, struct dwc3_charger *chg)
 {
 	struct dwc3_otg *dotg = container_of(otg, struct dwc3_otg, otg);
 
-	dotg->notify_psy = true;
 	/*
 	 * Ignore chg_detection notification if BSV has gone off by this time.
 	 * STOP chg_det as part of !BSV handling would reset the chg_det flags
@@ -409,37 +406,43 @@ static int dwc3_otg_set_power(struct usb_phy *phy, unsigned mA)
 
 	if (dotg->charger->charging_disabled)
 		return 0;
-
-	if (!dotg->notify_psy &&
-		dotg->charger->chg_type != DWC3_INVALID_CHARGER) {
+#ifndef VENDOR_EDIT
+	if (dotg->charger->chg_type != DWC3_INVALID_CHARGER) {
 		dev_dbg(phy->dev,
 			"SKIP setting power supply type again,chg_type = %d\n",
 			dotg->charger->chg_type);
 		goto skip_psy_type;
 	}
-
+#endif
 	if (dotg->charger->chg_type == DWC3_SDP_CHARGER)
 		power_supply_type = POWER_SUPPLY_TYPE_USB;
 	else if (dotg->charger->chg_type == DWC3_CDP_CHARGER)
-		power_supply_type = POWER_SUPPLY_TYPE_USB_CDP;
+#ifdef VENDOR_EDIT
+		power_supply_type = POWER_SUPPLY_TYPE_USB;
 	else if (dotg->charger->chg_type == DWC3_DCP_CHARGER ||
+			dotg->charger->chg_type == DWC3_PROPRIETARY_CHARGER ||
+	        dotg->charger->chg_type == DWC3_FLOATED_CHARGER)
+		power_supply_type = POWER_SUPPLY_TYPE_USB_DCP;
+#else
+        power_supply_type = POWER_SUPPLY_TYPE_USB_CDP;
+else if (dotg->charger->chg_type == DWC3_DCP_CHARGER ||
 			dotg->charger->chg_type == DWC3_PROPRIETARY_CHARGER)
 		power_supply_type = POWER_SUPPLY_TYPE_USB_DCP;
+#endif
 	else
 		power_supply_type = POWER_SUPPLY_TYPE_UNKNOWN;
 
 	power_supply_set_supply_type(dotg->psy, power_supply_type);
-	dotg->notify_psy = false;
-
+#ifndef  VENDOR_EDIT
 skip_psy_type:
-
+#endif
 	if (dotg->charger->chg_type == DWC3_CDP_CHARGER)
 		mA = DWC3_IDEV_CHG_MAX;
 
 	if (dotg->charger->max_power == mA)
 		return 0;
 
-	dev_info(phy->dev, "Avail curr from USB = %u\n", mA);
+	dev_err(phy->dev, "Avail curr from USB = %u\n", mA);
 
 	if (dotg->charger->max_power > 0 && (mA == 0 || mA == 2)) {
 		/* Disable charging */
@@ -564,18 +567,16 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 				/* Has charger been detected? If no detect it */
 				switch (charger->chg_type) {
 				case DWC3_DCP_CHARGER:
+				case DWC3_PROPRIETARY_CHARGER:
 					dev_dbg(phy->dev, "lpm, DCP charger\n");
 					dwc3_otg_set_power(phy,
-							DWC3_IDEV_CHG_DCP);
-					dbg_event(0xFF, "DCP put", 0);
-					pm_runtime_put_sync(phy->dev);
-					break;
-				case DWC3_PROPRIETARY_CHARGER:
-					dev_dbg(phy->dev, "lpm, PROP charger\n");
-					dwc3_otg_set_power(phy,
-							DWC3_IDEV_CHG_PROP);
+						dcp_max_current);
 					dbg_event(0xFF, "PROPCHG put", 0);
+			#ifdef VENDOR_EDIT //yangfangbiao@oneplus.cn, 20150613
+			//do nothing ,do not  need to let system suspend
+			#else
 					pm_runtime_put_sync(phy->dev);
+			#endif
 					break;
 				case DWC3_CDP_CHARGER:
 					dwc3_otg_set_power(phy,
@@ -586,21 +587,12 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 					work = 1;
 					break;
 				case DWC3_SDP_CHARGER:
-					if (dotg->otg.gadget &&
-						usb_gadget_get_charge_enabled(
-							dotg->otg.gadget))
-						dwc3_otg_set_power(phy,
-							DWC3_IDEV_CHG_MIN);
+#ifdef VENDOR_EDIT
+					dwc3_otg_set_power(phy, DWC3_SDP_CHG_MAX);
+#endif
 					dwc3_otg_start_peripheral(&dotg->otg,
 									1);
 					phy->state = OTG_STATE_B_PERIPHERAL;
-					dotg->falsesdp_retry_count = 0;
-					if (dotg->charger &&
-						!dotg->charger->factory_mode) {
-						mod_timer(
-							&dotg->chg_check_timer,
-							CHG_RECHECK_DELAY);
-					}
 					work = 1;
 					break;
 				case DWC3_FLOATED_CHARGER:
@@ -618,9 +610,13 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 					 */
 					if (dotg->charger_retry_count ==
 						max_chgr_retry_count) {
+					#ifdef VENDOR_EDIT	//yangfb add to set charge current to  FLOATED_CHARGER ,20150805
+						dwc3_otg_set_power(phy, DWC3_IDEV_CHG_MAX);
+					#else
 						dwc3_otg_set_power(phy, 0);
+					#endif
 						dbg_event(0xFF, "FLCHG put", 0);
-						pm_runtime_put_sync(phy->dev);
+						//pm_runtime_put_sync(phy->dev); ////do nothing ,do not  need to let system suspend
 						break;
 					}
 					charger->start_detection(dotg->charger,
@@ -664,22 +660,9 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 		break;
 
 	case OTG_STATE_B_PERIPHERAL:
-		if (test_bit(B_SESS_VLD, &dotg->inputs) &&
-				test_bit(B_FALSE_SDP, &dotg->inputs)) {
-			dev_dbg(phy->dev, "B_FALSE_SDP - TA Charger ?\n");
-			dwc3_otg_start_peripheral(&dotg->otg, 0);
-			phy->state = OTG_STATE_B_IDLE;
-			dotg->notify_psy = true;
-			if (charger)
-				charger->chg_type = DWC3_PROPRIETARY_CHARGER;
-			clear_bit(B_FALSE_SDP, &dotg->inputs);
-			work = 1;
-		} else if (!test_bit(B_SESS_VLD, &dotg->inputs) ||
+		if (!test_bit(B_SESS_VLD, &dotg->inputs) ||
 				!test_bit(ID, &dotg->inputs)) {
 			dev_dbg(phy->dev, "!id || !bsv\n");
-			del_timer_sync(&dotg->chg_check_timer);
-			dotg->falsesdp_retry_count = 0;
-			clear_bit(B_FALSE_SDP, &dotg->inputs);
 			dwc3_otg_start_peripheral(&dotg->otg, 0);
 			phy->state = OTG_STATE_B_IDLE;
 			if (charger)
@@ -757,37 +740,6 @@ static void dwc3_otg_sm_work(struct work_struct *w)
 		queue_delayed_work(system_nrt_wq, &dotg->sm_work, delay);
 }
 
-static void dwc3_otg_chg_check_timer_func(unsigned long data)
-{
-	struct dwc3_otg *dotg = (struct dwc3_otg *) data;
-	struct usb_phy *phy = dotg->otg.phy;
-
-	if (pm_runtime_status_suspended(phy->dev) ||
-		!test_bit(B_SESS_VLD, &dotg->inputs) ||
-		phy->state != OTG_STATE_B_PERIPHERAL ||
-		phy->otg->gadget->speed != USB_SPEED_UNKNOWN) {
-		dev_info(phy->dev, "Nothing to do in chg_check_timer\n");
-		return;
-	}
-
-	if (!dotg->charger || !dotg->charger->get_linestate)
-		return;
-
-	if (dotg->charger->get_linestate(dotg->charger) & DWC3_LS) {
-		dev_info(phy->dev, "DCP is detected as SDP\n");
-		set_bit(B_FALSE_SDP, &dotg->inputs);
-		queue_delayed_work(system_nrt_wq, &dotg->sm_work, 0);
-		return;
-	}
-	if (dotg->falsesdp_retry_count <  max_chgr_retry_count)
-		dotg->falsesdp_retry_count++;
-
-	if (dotg->falsesdp_retry_count == max_chgr_retry_count)
-		dwc3_otg_set_power(phy, DWC3_IDEV_CHG_MIN);
-	else
-		mod_timer(&dotg->chg_check_timer, CHG_RECHECK_DELAY);
-}
-
 /**
  * dwc3_otg_init - Initializes otg related registers
  * @dwc: Pointer to out controller context structure
@@ -829,8 +781,6 @@ int dwc3_otg_init(struct dwc3 *dwc)
 
 	init_completion(&dotg->dwc3_xcvr_vbus_init);
 	INIT_DELAYED_WORK(&dotg->sm_work, dwc3_otg_sm_work);
-	setup_timer(&dotg->chg_check_timer, dwc3_otg_chg_check_timer_func,
-					(unsigned long) dotg);
 
 	dbg_event(0xFF, "OTGInit get", 0);
 	pm_runtime_get(dwc->dev);
