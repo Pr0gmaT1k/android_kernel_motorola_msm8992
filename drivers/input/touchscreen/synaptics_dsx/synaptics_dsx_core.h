@@ -5,7 +5,7 @@
  *
  * Copyright (C) 2012 Alexandra Chin <alexandra.chin@tw.synaptics.com>
  * Copyright (C) 2012 Scott Lin <scott.lin@tw.synaptics.com>
- * Copyright (c) 2014, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2014, 2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -248,6 +248,7 @@ struct synaptics_rmi4_data {
 	struct mutex rmi4_reset_mutex;
 	struct mutex rmi4_io_ctrl_mutex;
 #if defined(CONFIG_FB)
+	struct work_struct fb_notify_work;
 	struct notifier_block fb_notif;
 #elif defined(CONFIG_HAS_EARLYSUSPEND)
 	struct early_suspend early_suspend;
@@ -269,6 +270,12 @@ struct synaptics_rmi4_data {
 	unsigned short f01_cmd_base_addr;
 	unsigned short f01_ctrl_base_addr;
 	unsigned short f01_data_base_addr;
+/*  NBQ - AlbertWu - [NBQ-74] - [Touch] Add touch panel get version command. */
+	unsigned short f34_query_base_addr;
+	unsigned short f34_cmd_base_addr;
+	unsigned short f34_ctrl_base_addr;
+	unsigned short f34_data_base_addr;
+/* end  NBQ - AlbertWu - [NBQ-74] */
 	unsigned int firmware_id;
 	int irq;
 	int sensor_max_x;
@@ -301,6 +308,7 @@ struct synaptics_rmi4_data {
 	struct clk *core_clk;
 	struct clk *iface_clk;
 #endif
+	ktime_t timestamp;
 };
 
 struct synaptics_dsx_bus_access {
@@ -341,7 +349,9 @@ int synaptics_dsx_fw_updater(unsigned char *fw_data);
 int synaptics_dsx_get_dt_coords(struct device *dev, char *name,
 				struct synaptics_dsx_board_data *pdata,
 				struct device_node *node);
-
+/*  NBQ - EricHsieh - [06-41] - [Touch] Update Synaptics touch firmware */
+int synaptics_test_reset_device(struct synaptics_rmi4_data *rmi4_data);
+/* end  NBQ - EricHsieh - [06-41] */
 static inline int synaptics_rmi4_reg_read(
 		struct synaptics_rmi4_data *rmi4_data,
 		unsigned short addr,

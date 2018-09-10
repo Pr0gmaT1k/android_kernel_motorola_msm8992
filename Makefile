@@ -380,7 +380,8 @@ KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 		   -fno-delete-null-pointer-checks \
 		   -std=gnu89
 
-KBUILD_CFLAGS   += -mcpu=cortex-a57.cortex-a53
+# TheCrazyLex@PA Optimize for Cortex-A53+Cortex-A57 combo
+KBUILD_CFLAGS	+= -mcpu=cortex-a57.cortex-a53
 
 KBUILD_AFLAGS_KERNEL :=
 KBUILD_CFLAGS_KERNEL :=
@@ -388,13 +389,6 @@ KBUILD_AFLAGS   := -D__ASSEMBLY__
 KBUILD_AFLAGS_MODULE  := -DMODULE
 KBUILD_CFLAGS_MODULE  := -DMODULE
 KBUILD_LDFLAGS_MODULE := -T $(srctree)/scripts/module-common.lds
-
-#ifdef VENDOR_EDIT
-KBUILD_CFLAGS +=   -DVENDOR_EDIT
-KBUILD_CPPFLAGS += -DVENDOR_EDIT
-CFLAGS_KERNEL +=   -DVENDOR_EDIT
-CFLAGS_MODULE +=   -DVENDOR_EDIT
-#endif
 
 # Read KERNELRELEASE from include/config/kernel.release (if it exists)
 KERNELRELEASE = $(shell cat include/config/kernel.release 2> /dev/null)

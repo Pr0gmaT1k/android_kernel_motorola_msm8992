@@ -157,9 +157,9 @@ config FW_LOADER_USER_HELPER
 	  resides in a non-standard path.
 
 config FW_CACHE
-       bool "Enable firmware caching during suspend"
-       depends on PM_SLEEP
-       default n
+	bool "Enable firmware caching during suspend"
+	depends on PM_SLEEP
+	default n
 
 config DEBUG_DRIVER
 	bool "Driver Core verbose debug messages"

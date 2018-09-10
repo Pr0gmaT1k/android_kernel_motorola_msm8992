@@ -29,6 +29,8 @@
 #define POWER_COLLAPSE_TIME msecs_to_jiffies(100)
 
 static DEFINE_MUTEX(cmd_clk_mtx);
+static int mdss_mdp_cmd_config_fps(struct mdss_mdp_ctl *ctl,
+					struct mdss_mdp_ctl *sctl, int new_fps);
 
 struct mdss_mdp_cmd_ctx {
 	struct mdss_mdp_ctl *ctl;
@@ -483,7 +485,7 @@ static void mdss_mdp_cmd_pingpong_done(void *arg)
 		if (mdss_mdp_cmd_do_notifier(ctx)) {
 			atomic_inc(&ctx->pp_done_cnt);
 			status = mdss_mdp_ctl_perf_get_transaction_status(ctl);
-			if (status == 0)
+			if (status == 0 && !ctl->commit_in_progress)
 				schedule_work(&ctx->pp_done_work);
 		}
 		wake_up_all(&ctx->pp_waitq);
@@ -1242,27 +1244,7 @@ int mdss_mdp_cmd_stop(struct mdss_mdp_ctl *ctl, int panel_power_state)
 	}
 
 	mutex_lock(&ctl->offlock);
-	#ifndef VENDOR_EDIT
-	//add Patch from Qualcomm 2015-04-22 for fix "Display can not power on after receive  a Weixin message in power off state" issue.
-	if (__mdss_mdp_cmd_is_panel_power_on_interactive(ctx)) {
-
-		if (mdss_panel_is_power_on_lp(panel_power_state)) {
-			/*
-			 * If we are transitioning from interactive to low
-			 * power, then we need to send events to the interface
-			 * so that the panel can be configured in low power
-			 * mode.
-			 */
-			send_panel_events = true;
-			if (mdss_panel_is_power_on_ulp(panel_power_state))
-				turn_off_clocks = true;
-		} else if (mdss_panel_is_power_off(panel_power_state)) {
-			send_panel_events = true;
-			turn_off_clocks = true;
-			panel_off = true;
-		}
-	#else
-if (mdss_panel_is_power_off(panel_power_state)) {
+	if (mdss_panel_is_power_off(panel_power_state)) {
 		/* Transition to display off */
 		send_panel_events = true;
 		turn_off_clocks = true;
@@ -1277,7 +1259,6 @@ if (mdss_panel_is_power_off(panel_power_state)) {
 		send_panel_events = true;
 		if (mdss_panel_is_power_on_ulp(panel_power_state))
 			turn_off_clocks = true;
-	#endif
 	} else {
 		/* Transitions between low power and ultra low power */
 		if (mdss_panel_is_power_on_ulp(panel_power_state)) {
@@ -1567,6 +1548,78 @@ static int mdss_mdp_cmd_reconfigure(struct mdss_mdp_ctl *ctl,
 	return 0;
 }
 
+static int mdss_mdp_cmd_config_fps(struct mdss_mdp_ctl *ctl,
+					struct mdss_mdp_ctl *sctl, int new_fps)
+{
+	struct mdss_mdp_cmd_ctx *ctx, *sctx = NULL;
+	struct mdss_panel_data *pdata;
+	int rc = 0;
+
+	ctx = (struct mdss_mdp_cmd_ctx *) ctl->intf_ctx[MASTER_CTX];
+	if (!ctx) {
+		pr_err("invalid ctx\n");
+		return -ENODEV;
+	}
+
+	if (sctl) {
+		sctx = (struct mdss_mdp_cmd_ctx *) sctl->intf_ctx[MASTER_CTX];
+		if (!sctx) {
+			pr_err("invalid ctx\n");
+			return -ENODEV;
+		}
+	} else if (is_pingpong_split(ctl->mfd)) {
+		sctx = (struct mdss_mdp_cmd_ctx *) ctl->intf_ctx[SLAVE_CTX];
+		if (!sctx) {
+			pr_err("invalid sctx\n");
+			return -ENODEV;
+		}
+	}
+
+	pdata = ctl->panel_data;
+	if (pdata == NULL) {
+		pr_err("%s: Invalid panel data\n", __func__);
+		return -EINVAL;
+	}
+
+	if (!pdata->panel_info.dynamic_fps) {
+		pr_err("%s: Dynamic fps not enabled for this panel\n",
+		       __func__);
+		return -EINVAL;
+	}
+
+	if (pdata->panel_info.dfps_update ==
+	    DFPS_IMMEDIATE_LCM_CLK_UPDATE_MODE) {
+		/*
+		 * There is possibility that the time of mdp flush
+		 * bit set and the time of dsi flush bit are cross
+		 * vsync boundary. Therefore wait4vsync is needed
+		 * to guarantee both flush bits are set within same
+		 * vsync period regardless of mdp revision.
+		 */
+		rc = mdss_mdp_cmd_wait4pingpong(ctl, NULL);
+		if (rc) {
+		    pr_err("Error during wait4pingpong\n");
+		    return rc;
+		}
+
+		mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON);
+
+		rc = mdss_mdp_ctl_intf_event(ctl,
+				MDSS_EVENT_PANEL_UPDATE_FPS,
+				(void *) (unsigned long) new_fps);
+		WARN(rc, "intf %d panel fps update error (%d)\n",
+		     ctl->intf_num, rc);
+
+		mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF);
+	} else {
+		pr_err("intf %d panel, unknown FPS mode\n",
+				ctl->intf_num);
+		return -EINVAL;
+	}
+
+	return rc;
+}
+
 int mdss_mdp_cmd_start(struct mdss_mdp_ctl *ctl)
 {
 	int ret, session = 0;
@@ -1589,6 +1642,7 @@ int mdss_mdp_cmd_start(struct mdss_mdp_ctl *ctl)
 	ctl->ops.read_line_cnt_fnc = mdss_mdp_cmd_line_count;
 	ctl->ops.restore_fnc = mdss_mdp_cmd_restore;
 	ctl->ops.reconfigure = mdss_mdp_cmd_reconfigure;
+	ctl->ops.config_fps_fnc = mdss_mdp_cmd_config_fps;
 	pr_debug("%s:-\n", __func__);
 
 	return 0;

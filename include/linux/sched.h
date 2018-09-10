@@ -52,7 +52,6 @@ struct sched_param {
 #include <linux/llist.h>
 #include <linux/uidgid.h>
 #include <linux/gfp.h>
-#include <linux/cpufreq.h>
 
 #include <asm/processor.h>
 
@@ -1090,9 +1089,6 @@ struct ravg {
 	u64 mark_start;
 	u32 sum, demand;
 	u32 sum_history[RAVG_HIST_SIZE_MAX];
-#ifdef VENDOR_EDIT
-	unsigned mitigated:1;
-#endif
 #ifdef CONFIG_SCHED_FREQ_INPUT
 	u32 curr_window, prev_window;
 #endif
@@ -1160,38 +1156,13 @@ enum perf_event_task_context {
 	perf_nr_task_contexts,
 };
 
-
-#ifdef CONFIG_TASK_CPUFREQ_STATS
-struct task_cpufreq_stats {
-	int max_state;
-	/*
-	 * a table holding the current time
-	 * (in jiffies) on this CPU at
-	 * frequency freq_table[i]. freq_table can be
-         * obtained from drivers/cpufreq/freq_table.h.
-	 */
-	u64 *time_in_state;
-	/*
-	 * a table holding the cumulative time
-         * (in jiffies) spent by this task on this CPU
-	 * at frequency freq_table[i]. freq_table can be
-         * obtained from drivers/cpufreq/freq_table.h.
-	 */
-	u64 *cumulative_time_in_state;
-};
-#endif
-
 struct task_struct {
 	volatile long state;	/* -1 unrunnable, 0 runnable, >0 stopped */
 	void *stack;
 	atomic_t usage;
 	unsigned int flags;	/* per process flags, defined below */
 	unsigned int ptrace;
-        #ifdef VENDOR_EDIT
-        //huruihuan add for kill task in D status
-	unsigned int kill_flag;
-	struct timespec ttu;
-        #endif
+
 #ifdef CONFIG_SMP
 	struct llist_node wake_entry;
 	int on_cpu;
@@ -1586,9 +1557,6 @@ struct task_struct {
 	unsigned int	sequential_io;
 	unsigned int	sequential_io_avg;
 #endif
-#ifdef CONFIG_TASK_CPUFREQ_STATS
-	struct task_cpufreq_stats cpufreq_stats[NR_CPUS];
-#endif
 };
 
 /* Future-safe accessor for struct task_struct's cpus_allowed. */
@@ -1616,19 +1584,6 @@ static inline struct pid *task_tgid(struct task_struct *task)
 	return task->group_leader->pids[PIDTYPE_PID].pid;
 }
 
-#ifdef CONFIG_TASK_CPUFREQ_STATS
-static inline void task_update_time_in_state(struct task_struct *task, int cpu)
-{
-	update_time_in_state(task, cpu);
-}
-
-static inline void task_update_cumulative_time_in_state(struct task_struct *task,
-						 struct task_struct *parent,
-						 int cpu)
-{
-	update_cumulative_time_in_state(task, parent, cpu);
-}
-#endif
 /*
  * Without tasklist or rcu lock it is not safe to dereference
  * the result of task_pgrp/task_session even if task == current,
@@ -2017,6 +1972,10 @@ extern int
 sched_set_cpu_mostly_idle_freq(int cpu, unsigned int mostly_idle_freq);
 extern unsigned int sched_get_cpu_mostly_idle_freq(int cpu);
 
+// TheCrazyLex@PA Introduce Shadow scheduling extension - start
+void sched_set_shadow_active(bool active);
+// TheCrazyLex@PA Introduce Shadow scheduling extension - end
+
 #else
 static inline int sched_set_boost(int enable)
 {
@@ -2063,6 +2022,7 @@ extern u64 cpu_clock(int cpu);
 extern u64 local_clock(void);
 extern u64 sched_clock_cpu(int cpu);
 
+extern u64 sched_ktime_clock(void);
 
 extern void sched_clock_init(void);
 extern int sched_clock_initialized(void);
@@ -2639,7 +2599,7 @@ static inline int test_and_clear_tsk_thread_flag(struct task_struct *tsk, int fl
 
 static inline int test_tsk_thread_flag(struct task_struct *tsk, int flag)
 {
-	return test_ti_thread_flag_relaxed(task_thread_info(tsk), flag);
+	return test_ti_thread_flag(task_thread_info(tsk), flag);
 }
 
 static inline void set_tsk_need_resched(struct task_struct *tsk)

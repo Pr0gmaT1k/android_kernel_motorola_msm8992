@@ -970,6 +970,13 @@ static void pcie_phy_init(struct msm_pcie_dev_t *dev)
 	PCIE_DBG(dev, "RC%d: Initializing 20nm QMP phy - 19.2MHz\n",
 		dev->rc_idx);
 
+#ifdef CONFIG_MACH_FIH_NBQ
+	msm_pcie_write_reg(dev->phy, PCIE_PHY_SW_RESET, 0x01);
+	msm_pcie_write_reg(dev->phy, PCIE_PHY_POWER_DOWN_CONTROL, 0x0);
+	wmb();
+	udelay(1000);
+#endif
+
 	msm_pcie_write_reg(dev->phy, PCIE_PHY_POWER_DOWN_CONTROL, 0x03);
 
 	msm_pcie_write_reg(dev->phy, QSERDES_COM_SYSCLK_EN_SEL_TXBAND, 0x08);
@@ -5124,8 +5131,7 @@ void msm_pcie_fixup_resume(struct pci_dev *dev)
 }
 DECLARE_PCI_FIXUP_RESUME(PCIE_VENDOR_ID_RCP, PCIE_DEVICE_ID_RCP,
 				 msm_pcie_fixup_resume);
-#ifndef VENDOR_EDIT//sync from project 15801
-/* comment out for reduce resume time according to QCT CASE#02401320  */
+
 void msm_pcie_fixup_resume_early(struct pci_dev *dev)
 {
 	int ret;
@@ -5147,7 +5153,7 @@ void msm_pcie_fixup_resume_early(struct pci_dev *dev)
 }
 DECLARE_PCI_FIXUP_RESUME_EARLY(PCIE_VENDOR_ID_RCP, PCIE_DEVICE_ID_RCP,
 				 msm_pcie_fixup_resume_early);
-#endif
+
 int msm_pcie_pm_control(enum msm_pcie_pm_opt pm_opt, u32 busnr, void *user,
 			void *data, u32 options)
 {

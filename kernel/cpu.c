@@ -346,7 +346,7 @@ static int __ref _cpu_down(unsigned int cpu, int tasks_frozen)
 	 * Wait for the stop thread to go away.
 	 */
 	while (!idle_cpu(cpu))
-		cpu_read_relax();
+		cpu_relax();
 
 	/* This actually kills the CPU. */
 	__cpu_die(cpu);
@@ -488,6 +488,15 @@ int __cpuinit cpu_up(unsigned int cpu)
 	}
 
 	err = _cpu_up(cpu, 0);
+	if (!err) {
+		struct device *cpu_device;
+		cpu_device = get_cpu_device(cpu);
+		if (!cpu_device)
+			pr_err("%s: failed to get cpu%d device\n",
+				   __func__, cpu);
+		else
+			kobject_uevent(&cpu_device->kobj, KOBJ_ONLINE);
+	}
 
 out:
 	cpu_maps_update_done();
@@ -546,13 +555,13 @@ void __weak arch_enable_nonboot_cpus_end(void)
 void __ref enable_nonboot_cpus(void)
 {
 	int cpu, error;
-	struct device *cpu_device;
 
 	/* Allow everyone to use the CPU hotplug again */
 	cpu_maps_update_begin();
 	cpu_hotplug_disabled = 0;
 	if (cpumask_empty(frozen_cpus))
 		goto out;
+
 	printk(KERN_INFO "Enabling non-boot CPUs ...\n");
 
 	arch_enable_nonboot_cpus_begin();
@@ -561,12 +570,6 @@ void __ref enable_nonboot_cpus(void)
 		error = _cpu_up(cpu, 1);
 		if (!error) {
 			printk(KERN_INFO "CPU%d is up\n", cpu);
-			cpu_device = get_cpu_device(cpu);
-			if (!cpu_device)
-				printk(KERN_ERR "%s: failed to get cpu%d device\n",
-				       __func__, cpu);
-			else
-				kobject_uevent(&cpu_device->kobj, KOBJ_ONLINE);
 			continue;
 		}
 		printk(KERN_WARNING "Error taking CPU%d up: %d\n", cpu, error);

@@ -98,6 +98,10 @@ static const char longname[] = "Gadget Android";
 #define MIDI_BUFFER_SIZE    1024
 #define MIDI_QUEUE_LENGTH   32
 
+#ifdef CONFIG_MACH_FIH_NBQ
+#define FIH_CHARGER_DETECT
+#endif
+
 struct android_usb_function {
 	char *name;
 	void *config;
@@ -394,6 +398,9 @@ enum android_device_state {
 	USB_RESUMED
 };
 
+#ifdef FIH_CHARGER_DETECT
+extern void set_charger_type(int);
+#endif
 static void android_work(struct work_struct *data)
 {
 	struct android_dev *dev = container_of(data, struct android_dev, work);
@@ -472,6 +479,10 @@ static void android_work(struct work_struct *data)
 			last_uevent = next_state;
 		}
 		pr_info("%s: sent uevent %s\n", __func__, uevent_envp[0]);
+#ifdef FIH_CHARGER_DETECT
+		if (uevent_envp == configured)
+			set_charger_type(4); // 4: POWER_SUPPLY_TYPE_USB
+#endif
 	} else {
 		pr_info("%s: did not send uevent (%d %d %pK)\n", __func__,
 			 dev->connected, dev->sw_connected, cdev->config);
@@ -659,27 +670,9 @@ static int functionfs_ready_callback(struct ffs_data *ffs)
 	/* Save dev in case the adb function will get disabled */
 	config->dev = dev;
 
-#ifndef VENDOR_EDIT//add by jiachenghui for usb fail after rndis click some times, 2015-11-11
 	if (config->enabled)
 		android_enable(dev);
 
-//add by jiachenghui for usb fail after rndis click some times, 2015-11-11
-#else
-	if (config->enabled){
-		ret = android_enable(dev);
-              if (ret) {
-			pr_err("%s: failed to enable android, err:%d\n", __func__,ret);
-			functionfs_unbind(ffs);
-			config->dev = NULL;
-	              config->opened = false;
-	              config->data = NULL;
-			if (dev)
-			     mutex_unlock(&dev->mutex);
-			return ret;
-		}
-	}
-#endif
-//end add by jiachenghui for usb fail after rndis click some times, 2015-11-11
 	mutex_unlock(&dev->mutex);
 
 	return 0;
@@ -2453,15 +2446,9 @@ static int mass_storage_function_init(struct android_usb_function *f,
 		return -ENOMEM;
 	}
 
-#ifndef VENDOR_EDIT//add by jiachenghui for USB VID customized & cdrom,2015-11-11
 	config->fsg.nluns = 1;
 	snprintf(name[0], MAX_LUN_NAME, "lun");
 	config->fsg.luns[0].removable = 1;
-//add by jiachenghui for USB VID customized & cdrom,2015-11-11
-#else
-	config->fsg.nluns = 0;
-#endif
-//add by jiachenghui for USB VID customized & cdrom,2015-11-11
 
 	if (dev->pdata && dev->pdata->cdrom) {
 		config->fsg.luns[config->fsg.nluns].cdrom = 1;

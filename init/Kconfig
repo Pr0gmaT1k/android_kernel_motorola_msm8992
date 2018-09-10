@@ -65,7 +65,7 @@ config LOCALVERSION
 
 config LOCALVERSION_AUTO
 	bool "Automatically append version information to the version string"
-	default n
+	default y
 	help
 	  This will try to automatically determine if the current tree is a
 	  release tree by looking for git tags that belong to the current
@@ -688,7 +688,7 @@ choice
 
 config RCU_NOCB_CPU_NONE
 	bool "No build_forced no-CBs CPUs"
-	depends on RCU_NOCB_CPU && !NO_HZ_FULL
+	depends on RCU_NOCB_CPU
 	help
 	  This option does not force any of the CPUs to be no-CBs CPUs.
 	  Only CPUs designated by the rcu_nocbs= boot parameter will be
@@ -696,7 +696,7 @@ config RCU_NOCB_CPU_NONE
 
 config RCU_NOCB_CPU_ZERO
 	bool "CPU 0 is a build_forced no-CBs CPU"
-	depends on RCU_NOCB_CPU && !NO_HZ_FULL
+	depends on RCU_NOCB_CPU
 	help
 	  This option forces CPU 0 to be a no-CBs CPU.  Additional CPUs
 	  may be designated as no-CBs CPUs using the rcu_nocbs= boot
@@ -741,7 +741,7 @@ config IKCONFIG_PROC
 config LOG_BUF_SHIFT
 	int "Kernel log buffer size (16 => 64KB, 17 => 128KB)"
 	range 12 21
-	default 18
+	default 17
 	help
 	  Select kernel log buffer size as a power of 2.
 	  Examples:
@@ -852,14 +852,6 @@ config CPUSETS
 	  This is primarily useful on large SMP or NUMA systems.
 
 	  Say N if unsure.
-
-config TASK_CPUFREQ_STATS
-	bool "task cpufreq stats support"
-	help
-	  Export cumulative time spent by tasks/processes in each frequency
-          for each cpu through /proc/<pid> interface. The statistics are
-          available during the lifetime of tasks/processes as responses to
-          commands.
 
 config PROC_PID_CPUSET
 	bool "Include legacy /proc/<pid>/cpuset file"
@@ -1854,11 +1846,3 @@ config ASN1
 	  functions to call on what tags.
 
 source "kernel/Kconfig.locks"
-
-#add by jiachenghui for support oem trace,2015/05/09
-#ifdef VENDOR_EDIT
-config OEM_DEBUG_SUPORT
-	bool
-	default y
-#endif
-#end add by jiachenghui for support oem trace,2015/05/09

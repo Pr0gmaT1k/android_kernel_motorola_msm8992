@@ -476,9 +476,7 @@
 	qcom,hw-thd-dat = <13>;
 	qcom,hw-thd-sta = <84>;
 	qcom,hw-tbuf = <116>;
-/* changed by zhangxiaowei@camera 20150213 for AF OIS functions  */	
-	qcom,hw-scl-stretch-en = <1>;
-	//qcom,hw-scl-stretch-en = <0>;
+	qcom,hw-scl-stretch-en = <0>;
 	qcom,hw-trdhld = <6>;
 	qcom,hw-tsp = <3>;
 	status = "ok";
@@ -492,9 +490,7 @@
 	qcom,hw-thd-dat = <13>;
 	qcom,hw-thd-sta = <18>;
 	qcom,hw-tbuf = <32>;
-/* changed by zhangxiaowei@camera 20150213 for AF OIS functions  */	
-	qcom,hw-scl-stretch-en = <1>;
-	//qcom,hw-scl-stretch-en = <0>;
+	qcom,hw-scl-stretch-en = <0>;
 	qcom,hw-trdhld = <6>;
 	qcom,hw-tsp = <3>;
 	status = "ok";

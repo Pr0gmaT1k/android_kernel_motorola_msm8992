@@ -230,7 +230,7 @@ again:
 		 * completed. There is no conflict as we hold the lock until
 		 * the timer is enqueued.
 		 */
-		if (unlikely(hrtimer_callback_running_relaxed(timer)))
+		if (unlikely(hrtimer_callback_running(timer)))
 			return base;
 
 		/* See the comment in lock_timer_base() */
@@ -638,7 +638,7 @@ static int hrtimer_reprogram(struct hrtimer *timer,
 	 * reprogramming is handled either by the softirq, which called the
 	 * callback or at the end of the hrtimer_interrupt.
 	 */
-	if (hrtimer_callback_running_relaxed(timer))
+	if (hrtimer_callback_running(timer))
 		return 0;
 
 	/*
@@ -1090,7 +1090,7 @@ int hrtimer_try_to_cancel(struct hrtimer *timer)
 
 	base = lock_hrtimer_base(timer, &flags);
 
-	if (!hrtimer_callback_running_relaxed(timer))
+	if (!hrtimer_callback_running(timer))
 		ret = remove_hrtimer(timer, base);
 
 	unlock_hrtimer_base(timer, &flags);
@@ -1620,11 +1620,6 @@ SYSCALL_DEFINE2(nanosleep, struct timespec __user *, rqtp,
 		struct timespec __user *, rmtp)
 {
 	struct timespec tu;
-#ifdef VENDOR_EDIT
-	//xianglin add for [RAINS-3040]
-	struct timespec ctu;
-	struct task_struct *g_leader = current->group_leader;
-#endif
 
 	if (copy_from_user(&tu, rqtp, sizeof(tu)))
 		return -EFAULT;
@@ -1632,15 +1627,6 @@ SYSCALL_DEFINE2(nanosleep, struct timespec __user *, rqtp,
 	if (!timespec_valid(&tu))
 		return -EINVAL;
 
-#ifdef VENDOR_EDIT
-	getnstimeofday(&ctu);
-	ctu = timespec_add(ctu, tu);
-	if (timespec_compare(&ctu, &g_leader->ttu) > 0) {
-		g_leader->ttu.tv_sec = ctu.tv_sec;
-		g_leader->ttu.tv_nsec = ctu.tv_nsec;
-	}
-#endif
- 
 	return hrtimer_nanosleep(&tu, rmtp, HRTIMER_MODE_REL, CLOCK_MONOTONIC);
 }
 
@@ -1670,7 +1656,7 @@ static void migrate_hrtimer_list(struct hrtimer_clock_base *old_base,
 
 	while ((node = timerqueue_getnext(&old_base->active))) {
 		timer = container_of(node, struct hrtimer, node);
-		BUG_ON(hrtimer_callback_running_relaxed(timer));
+		BUG_ON(hrtimer_callback_running(timer));
 		debug_deactivate(timer);
 
 		/*

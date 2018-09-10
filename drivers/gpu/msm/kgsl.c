@@ -2572,6 +2572,8 @@ long kgsl_ioctl_cmdstream_freememontimestamp_ctxtid(
 	if (result)
 		kgsl_mem_entry_unset_pend(entry);
 
+	/* Free the reference that we took in this function when calling
+	   kgsl_sharedmem_find. */
 	kgsl_mem_entry_put(entry);
 
 out:
@@ -2793,6 +2795,20 @@ static int kgsl_setup_phys_file(struct kgsl_mem_entry *entry,
 }
 #endif
 
+static int check_vma_flags(struct vm_area_struct *vma,
+		unsigned int flags)
+{
+	unsigned long flags_requested = (VM_READ | VM_WRITE);
+
+	if (flags & KGSL_MEMFLAGS_GPUREADONLY)
+		flags_requested &= ~VM_WRITE;
+
+	if ((vma->vm_flags & flags_requested) == flags_requested)
+		return 0;
+
+	return -EFAULT;
+}
+
 static int check_vma(struct vm_area_struct *vma, struct file *vmfile,
 		struct kgsl_memdesc *memdesc)
 {
@@ -2806,7 +2822,7 @@ static int check_vma(struct vm_area_struct *vma, struct file *vmfile,
 	if (vma->vm_start != memdesc->useraddr ||
 		(memdesc->useraddr + memdesc->size) != vma->vm_end)
 		return -EINVAL;
-	return 0;
+	return check_vma_flags(vma, memdesc->flags);
 }
 
 static int memdesc_sg_virt(struct kgsl_memdesc *memdesc, struct file *vmfile)
@@ -2815,7 +2831,7 @@ static int memdesc_sg_virt(struct kgsl_memdesc *memdesc, struct file *vmfile)
 	long npages = 0, i;
 	unsigned long sglen = memdesc->size / PAGE_SIZE;
 	struct page **pages = NULL;
-	int write = (memdesc->flags & KGSL_MEMFLAGS_GPUREADONLY) != 0;
+	int write = ((memdesc->flags & KGSL_MEMFLAGS_GPUREADONLY) ? 0 : 1);
 
 	if (sglen == 0 || sglen >= LONG_MAX)
 		return -EINVAL;
@@ -2901,6 +2917,7 @@ static int kgsl_setup_useraddr(struct kgsl_mem_entry *entry,
 	struct kgsl_map_user_mem *param = data;
 	struct dma_buf *dmabuf = NULL;
 	struct vm_area_struct *vma = NULL;
+	int ret;
 
 	if (param->len == 0 || param->offset != 0
 		|| param->hostptr == 0
@@ -2917,6 +2934,12 @@ static int kgsl_setup_useraddr(struct kgsl_mem_entry *entry,
 
 	if (vma && vma->vm_file) {
 		int fd;
+
+		ret = check_vma_flags(vma, entry->memdesc.flags);
+		if (ret) {
+			up_read(&current->mm->mmap_sem);
+			return ret;
+		}
 
 		/*
 		 * Check to see that this isn't our own memory that we have
@@ -2935,11 +2958,11 @@ static int kgsl_setup_useraddr(struct kgsl_mem_entry *entry,
 	}
 
 	if (!IS_ERR_OR_NULL(dmabuf)) {
-		int ret = kgsl_setup_dma_buf(entry, pagetable, device, dmabuf);
+		ret = kgsl_setup_dma_buf(entry, pagetable, device, dmabuf);
 		if (ret) {
 			dma_buf_put(dmabuf);
 			up_read(&current->mm->mmap_sem);
-		} else {
+		}else {
 			/* Match the cache settings of the vma region */
 			_setup_cache_mode(entry, vma);
 			up_read(&current->mm->mmap_sem);
@@ -4714,14 +4737,11 @@ int kgsl_device_platform_probe(struct kgsl_device *device)
 
 
 	setup_timer(&device->idle_timer, kgsl_timer, (unsigned long) device);
-	status = kgsl_create_device_workqueue(device);
-	if (status)
-		goto error_pwrctrl_close;
 
 	status = kgsl_mmu_init(device);
 	if (status != 0) {
 		KGSL_DRV_ERR(device, "kgsl_mmu_init failed %d\n", status);
-		goto error_dest_work_q;
+		goto error_pwrctrl_close;
 	}
 
 	/* Check to see if our device can perform DMA correctly */
@@ -4772,9 +4792,6 @@ int kgsl_device_platform_probe(struct kgsl_device *device)
 
 error_close_mmu:
 	kgsl_mmu_close(device);
-error_dest_work_q:
-	destroy_workqueue(device->work_queue);
-	device->work_queue = NULL;
 error_pwrctrl_close:
 	kgsl_pwrctrl_close(device);
 error:
@@ -4799,10 +4816,6 @@ void kgsl_device_platform_remove(struct kgsl_device *device)
 
 	kgsl_mmu_close(device);
 
-	if (device->work_queue) {
-		destroy_workqueue(device->work_queue);
-		device->work_queue = NULL;
-	}
 	kgsl_pwrctrl_close(device);
 
 	_unregister_device(device);
@@ -4843,7 +4856,7 @@ static void kgsl_core_exit(void)
 static int __init kgsl_core_init(void)
 {
 	int result = 0;
-	struct sched_param param = { .sched_priority = 2 };
+	struct sched_param param = { .sched_priority = 3 };
 
 	/* alloc major and minor device numbers */
 	result = alloc_chrdev_region(&kgsl_driver.major, 0, KGSL_DEVICE_MAX,
@@ -4904,7 +4917,7 @@ static int __init kgsl_core_init(void)
 
 	INIT_LIST_HEAD(&kgsl_driver.pagetable_list);
 
-	kgsl_mmu_set_mmutype(ksgl_mmu_type);
+	kgsl_driver.workqueue = create_singlethread_workqueue("kgsl-workqueue");
 
 	init_kthread_worker(&kgsl_driver.worker);
 
@@ -4917,6 +4930,8 @@ static int __init kgsl_core_init(void)
 	}
 
 	sched_setscheduler(kgsl_driver.worker_thread, SCHED_FIFO, &param);
+
+	kgsl_mmu_set_mmutype(ksgl_mmu_type);
 
 	kgsl_events_init();
 
